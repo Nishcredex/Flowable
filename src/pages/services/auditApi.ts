@@ -78,8 +78,9 @@ import {
   startAtrExtensionCase,
   advanceExtensionCase,
   completeClosureNotificationJob,
+  
 } from './flowableApi';
-
+import pushInboxNotification from './flowableApi';
 /** auditeeSubmitAction — sets "action" to SUBMIT / EXTENSION / CANCEL per
  *  gatewayAuditeeAction's conditions. SUBMIT/EXTENSION carry the auditee's
  *  write-up; EXTENSION additionally needs the requested new target date,
@@ -140,6 +141,7 @@ export async function submitAtrAuditeeAction(
  *  job the BPMN process parks at right after — see completeTask's
  *  documentation on why that has to happen from here rather than
  *  waiting on a background worker that doesn't exist in this app. */
+
 export async function submitAtrAuditorReview(
   taskId: string,
   body: { reviewDecision: 'APPROVE' | 'REJECT' | 'INVALID' | 'BLOCKED'; reviewComments?: string },
@@ -150,14 +152,26 @@ export async function submitAtrAuditorReview(
     comments: body.reviewComments,
     ...({ reviewDecision: body.reviewDecision } as any),
   });
-
-  if (body.reviewDecision === 'APPROVE' && processInstanceId) {
-    const vars = await getProcessVariables(processInstanceId);
-    await completeClosureNotificationJob(
-      processInstanceId,
-      getVariableValue(vars, 'observationId'),
-      getVariableValue(vars, 'auditeeId')
-    );
+ 
+  if (!processInstanceId) return;
+  const vars = await getProcessVariables(processInstanceId);
+  const observationId = getVariableValue(vars, 'observationId');
+  const auditeeId = getVariableValue(vars, 'auditeeId');
+ 
+  if (body.reviewDecision === 'APPROVE') {
+    await completeClosureNotificationJob(processInstanceId, observationId, auditeeId);
+  } else if (body.reviewDecision === 'REJECT') {
+    // BPMN already loops the token back to auditeeSubmitAction on REJECT
+    // (see flowRejectToInProgress -> setStatusInProgress -> auditeeSubmitAction
+    // in ATR_OBSERVATION_LIFECYCLE_bpmn20.xml) — this just makes sure the
+    // auditee is actually told about it, including the auditor's comment.
+    await pushInboxNotification(auditeeId, {
+      kind: 'observation-returned',
+      message: body.reviewComments
+        ? `Observation ${observationId} was returned by the auditor: "${body.reviewComments}"`
+        : `Observation ${observationId} was returned by the auditor for revision.`,
+      observationId,
+    }).catch(() => {});
   }
 }
 
