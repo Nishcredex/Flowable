@@ -1,3 +1,5 @@
+
+
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   PlusIcon, FolderIcon, UsersIcon, ClipboardListIcon,
@@ -9,6 +11,7 @@ import {
   deleteProject, getAllProcessInstances,
   ProjectInstance, CreateProjectPayload,
 } from './services/flowableApi';
+import { useAuth } from '../pages/AuthContext';
 
 // ── Count audits per project name ─────────────────────────────
 // Uses inline variables from getAllProcessInstances — no per-instance fetch needed.
@@ -127,6 +130,7 @@ function ProjectModal({
 
 // ── Main ──────────────────────────────────────────────────────
 export function Projects() {
+  const { isAdmin } = useAuth();
   const [projects,   setProjects]   = useState<ProjectInstance[]>([]);
   const [counts,     setCounts]     = useState<Record<string, number>>({});
   const [loading,    setLoading]    = useState(true);
@@ -157,6 +161,7 @@ export function Projects() {
 
   // ── Create ────────────────────────────────────────────────
   const handleCreate = async (payload: CreateProjectPayload) => {
+    if (!isAdmin) return;
     setSaving(true);
     try {
       await createProjectProcess(payload);
@@ -171,6 +176,7 @@ export function Projects() {
 
   // ── Edit: update each changed variable on the process instance ──
   const handleEdit = async (payload: CreateProjectPayload) => {
+    if (!isAdmin) return;
     if (!editing) return;
     setSaving(true);
     try {
@@ -195,6 +201,7 @@ export function Projects() {
 
   // ── Delete ────────────────────────────────────────────────
   const handleDelete = async (p: ProjectInstance) => {
+    if (!isAdmin) return;
     if (!window.confirm(`Delete "${p.name}"?`)) return;
     setDeletingId(p.id);
     try {
@@ -209,10 +216,10 @@ export function Projects() {
 
   return (
     <div className="p-8">
-      {showModal && (
+      {isAdmin && showModal && (
         <ProjectModal onSave={handleCreate} onClose={() => setShowModal(false)} saving={saving} />
       )}
-      {editing && (
+      {isAdmin && editing && (
         <ProjectModal initial={editing} onSave={handleEdit} onClose={() => setEditing(null)} saving={saving} />
       )}
 
@@ -227,11 +234,13 @@ export function Projects() {
             <RefreshCwIcon className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
             Refresh
           </button>
-          <button onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-            <PlusIcon className="w-4 h-4" />
-            <span className="text-sm font-medium">New Project</span>
-          </button>
+          {isAdmin && (
+            <button onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+              <PlusIcon className="w-4 h-4" />
+              <span className="text-sm font-medium">New Project</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -300,18 +309,20 @@ export function Projects() {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-1 pt-2 border-t border-gray-100">
-                <button onClick={() => setEditing(project)}
-                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors">
-                  <Edit2Icon className="w-4 h-4" />
-                </button>
-                <button onClick={() => handleDelete(project)} disabled={deletingId === project.id}
-                  className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50">
-                  {deletingId === project.id
-                    ? <Loader2Icon className="w-4 h-4 animate-spin" />
-                    : <Trash2Icon className="w-4 h-4" />}
-                </button>
-              </div>
+              {isAdmin && (
+                <div className="flex justify-end gap-1 pt-2 border-t border-gray-100">
+                  <button onClick={() => setEditing(project)}
+                    className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors">
+                    <Edit2Icon className="w-4 h-4" />
+                  </button>
+                  <button onClick={() => handleDelete(project)} disabled={deletingId === project.id}
+                    className="p-1.5 text-red-600 hover:bg-red-50 rounded transition-colors disabled:opacity-50">
+                    {deletingId === project.id
+                      ? <Loader2Icon className="w-4 h-4 animate-spin" />
+                      : <Trash2Icon className="w-4 h-4" />}
+                  </button>
+                </div>
+              )}
             </div>
           ))}
 

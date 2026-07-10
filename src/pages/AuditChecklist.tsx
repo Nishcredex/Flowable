@@ -1,6 +1,3 @@
-// ============================================================
-//  AuditChecklist.tsx — with task status shown on active step
-// ============================================================
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -25,6 +22,8 @@ import {
 import {
   getProcessVariables,
   getTasksByProcessInstance,
+  getProcessInstanceById,
+  getTaskVariables,
   FlowableTask,
   ProcessVariable,
   getVariableValue,
@@ -247,8 +246,31 @@ export function AuditChecklist() {
   const [error,      setError]      = useState('');
   const [lastFetch,  setLastFetch]  = useState<Date | null>(null);
 
+  // ───────────────────────────────────────────────────────────
+  // buildSteps — the ONLY thing that decides which steps show as
+  // Completed / In Progress / Pending.
+  //
+  // auditManagementWorkflow.bpmn20.xml runs the checklist as a
+  // SEQUENTIAL multi-instance user task, so:
+  //   - there is ALWAYS exactly one active task per audit (or zero,
+  //     once the audit is closed) — tasks[0] IS the current step.
+  //   - that task carries a task-LOCAL variable "stepIndex", set by
+  //     Flowable itself (flowable:elementIndexVariable), giving the
+  //     exact 0-based position in checklistSteps. This is read
+  //     directly — no guessing from remaining-task counts, which is
+  //     what previously caused unrelated steps to flip to
+  //     "Completed" the moment any task finished.
+  //   - stepIndexFromTask is the source of truth. Name-matching is
+  //     kept only as a fallback for audits started before this fix
+  //     (old process instances with no stepIndex variable yet).
+  // ───────────────────────────────────────────────────────────
   const buildSteps = useCallback(
-    (vars: ProcessVariable[], tasks: FlowableTask[]): ChecklistStep[] => {
+    (
+      vars: ProcessVariable[],
+      tasks: FlowableTask[],
+      ended: boolean,
+      stepIndexFromTask: number | null
+    ): ChecklistStep[] => {
       let stepNames: string[] = [];
 
       const localStepsRaw = localStorage.getItem('currentChecklistSteps');
@@ -274,19 +296,49 @@ export function AuditChecklist() {
       // Read persisted taskStatus from process variable
       const savedTaskStatus = getVariableValue(vars, 'taskStatus') as TaskStatus | '';
 
-      const activeTasks = tasks;
+      const activeTask = tasks[0] || null;
+      let activeIndex = -1;
+
+      if (activeTask) {
+        if (stepIndexFromTask !== null && stepIndexFromTask >= 0 && stepIndexFromTask < stepNames.length) {
+          // Exact position, straight from Flowable's own loop counter.
+          activeIndex = stepIndexFromTask;
+        } else {
+          // Legacy fallback for audits started before stepIndex existed.
+          // Match on the task's own name (it's set to the literal step
+          // text by the BPMN: name="${stepItem}"). If even this fails,
+          // deliberately do NOT guess a position from task counts —
+          // that heuristic is exactly what caused unrelated steps to
+          // appear auto-completed. Better to show the active task
+          // un-positioned (index 0) than to falsely mark other steps done.
+          activeIndex = stepNames.findIndex((n) => n === activeTask.name);
+          if (activeIndex === -1) {
+            activeIndex = 0;
+            console.warn(
+              `AuditChecklist: active task "${activeTask.name}" has no stepIndex variable ` +
+              `and didn't match any checklist step name. Showing it as step 1 without ` +
+              `marking any other step complete — please re-open this audit after ` +
+              `deploying the updated auditManagementWorkflow.`
+            );
+          }
+        }
+      }
 
       return stepNames.map((name, index) => {
-        const totalCompleted = Math.max(0, stepNames.length - activeTasks.length);
-
         let status: StepStatus = 'Pending';
-        if (index < totalCompleted) {
+
+        if (activeIndex >= 0) {
+          if (index < activeIndex) status = 'Completed';
+          else if (index === activeIndex) status = 'In Progress';
+        } else if (!activeTask && ended) {
+          // No active task AND the process instance has actually finished
+          // (confirmed via getProcessInstanceById, not guessed) → every
+          // step is done. If the process is merely between tasks or still
+          // loading, this stays Pending instead of assuming completion.
           status = 'Completed';
-        } else if (index === totalCompleted && activeTasks.length > 0) {
-          status = 'In Progress';
         }
 
-        const taskForStep = status === 'In Progress' ? activeTasks[0] : null;
+        const taskForStep = status === 'In Progress' ? activeTask : null;
 
         return {
           index,
@@ -315,11 +367,29 @@ export function AuditChecklist() {
     setLoading(true);
     setError('');
     try {
-      const [vars, tasks] = await Promise.all([
+      const [vars, tasks, instance] = await Promise.all([
         getProcessVariables(processInstanceId),
         getTasksByProcessInstance(processInstanceId),
+        getProcessInstanceById(processInstanceId),
       ]);
-      setSteps(buildSteps(vars, tasks));
+
+      // Only the active task carries stepIndex — fetch its local
+      // variables once we know its id (can't be parallelized above).
+      let stepIndexFromTask: number | null = null;
+      const activeTask = tasks[0] || null;
+      if (activeTask) {
+        const taskVars = await getTaskVariables(activeTask.id);
+        const raw = taskVars.find((v) => v.name === 'stepIndex');
+        if (raw !== undefined && raw.value !== null && raw.value !== '') {
+          const n = Number(raw.value);
+          if (!Number.isNaN(n)) stepIndexFromTask = n;
+        }
+      }
+
+      // getProcessInstanceById returns null on a 404, which reliably means
+      // the process has ended (Flowable moves it to history tables).
+      const ended = instance === null ? true : instance.ended;
+      setSteps(buildSteps(vars, tasks, ended, stepIndexFromTask));
       setLastFetch(new Date());
     } catch (err) {
       setError(

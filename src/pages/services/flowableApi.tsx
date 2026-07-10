@@ -1,14 +1,7 @@
-// ============================================================
-//  flowableApi.ts
-//  Central service for all Flowable REST API calls
-//  Used by: CreateAudit, AuditChecklist, CompleteStep,
-//           MyTasks, TaskDetails, Dashboard, WorkflowView,
-//           Settings
-// ============================================================
 
 // const FLOWABLE_BASE = 'http://localhost:8080/flowable-ui/process-api';
 const FLOWABLE_BASE = 'http://localhost:3000/flowable-api';
-const CREDENTIALS   = btoa('admin:test'); // base64 of "admin:test"
+const CREDENTIALS   = btoa('admin:admin'); // base64 of "admin:test"
 
 const HEADERS = {
   'Content-Type':  'application/json',
@@ -54,6 +47,12 @@ export interface FlowableTask {
   processDefinitionId: string;
   taskDefinitionKey: string;
   description:       string | null;
+  /** Only present on CMMN tasks (e.g. commercialHeadApprovalTask /
+   *  functionalHeadApprovalTask) — the CMMN REST API returns
+   *  caseInstanceId instead of processInstanceId. Confirmed against
+   *  Flowable's CMMN REST docs ("Get a task" under cmmn-runtime/tasks). */
+  caseInstanceId?:    string;
+  caseDefinitionId?:  string;
 }
 
 // Process variable item returned by /variables endpoint
@@ -335,6 +334,32 @@ export async function getHistoricProcessInstances(): Promise<ProcessInstance[]> 
 }
 
 // ─────────────────────────────────────────────────────────────
+// GET A SINGLE PROCESS INSTANCE — used to check whether it has ended
+//    Called from: AuditChecklist.tsx, to distinguish "no active task
+//    because the process finished" from "no active task because the
+//    checklist state is just stale/loading".
+// ─────────────────────────────────────────────────────────────
+
+/** Returns the live process instance, or null if it has ended.
+ *  A 404 on /runtime/process-instances/{id} reliably means "ended" —
+ *  Flowable deletes runtime rows once a process reaches its end event,
+ *  moving everything to the history tables instead. */
+export async function getProcessInstanceById(
+  processInstanceId: string
+): Promise<ProcessInstance | null> {
+  try {
+    return await flowableFetch<ProcessInstance>(
+      `/runtime/process-instances/${processInstanceId}`
+    );
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('[404]')) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // 5. GET ALL TASKS (for a process instance)
 //    Called from: AuditChecklist.tsx to get step statuses
 // ─────────────────────────────────────────────────────────────
@@ -394,7 +419,184 @@ export async function completeTask(
     }
   );
 }
+// ─────────────────────────────────────────────────────────────
+// COMMENTS — native Flowable comment resource (process-instance
+// scoped). Replaces the old Node /api/audits/:id/comments route and
+// the "comments" process variable — comments now live in Flowable's
+// own comment tables. Node is a pure CORS passthrough here, nothing else.
+//
+// CAVEAT: every call in this file authenticates as the fixed
+// admin:admin service account (see CREDENTIALS above), not the logged
+// -in app user — so Flowable's own `author` field will always read
+// "admin", not the real person. authorId/authorName/role are packed
+// into the comment's `message` as JSON instead, and unpacked on read.
+// `time` is NOT client-supplied — it's Flowable's own server timestamp.
+// ─────────────────────────────────────────────────────────────
 
+interface FlowableComment {
+  id: string;
+  author: string;
+  message: string;
+  taskId: string | null;
+  processInstanceId: string | null;
+  time: string;
+}
+
+export interface CommentEntry {
+  authorId: string;
+  authorName?: string;
+  role?: string;
+  text: string;
+  timestamp: string;
+}
+
+function decodeComment(c: FlowableComment): CommentEntry {
+  try {
+    const parsed = JSON.parse(c.message);
+    return {
+      authorId: parsed.authorId ?? c.author,
+      authorName: parsed.authorName,
+      role: parsed.role,
+      text: parsed.text ?? c.message,
+      timestamp: c.time,
+    };
+  } catch {
+    // Plain-text comment (e.g. added directly in Flowable) — show as-is
+    return { authorId: c.author, text: c.message, timestamp: c.time };
+  }
+}
+
+export async function getProcessInstanceComments(
+  processInstanceId: string
+): Promise<CommentEntry[]> {
+  const comments = await flowableFetch<FlowableComment[]>(
+    `/runtime/process-instances/${processInstanceId}/comments`
+  );
+  return (comments || [])
+    .map(decodeComment)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+
+export async function addProcessInstanceComment(
+  processInstanceId: string,
+  entry: { authorId: string; authorName?: string; role?: string; text: string }
+): Promise<CommentEntry[]> {
+  await flowableFetch<FlowableComment>(
+    `/runtime/process-instances/${processInstanceId}/comments`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        message: JSON.stringify({
+          authorId: entry.authorId,
+          authorName: entry.authorName,
+          role: entry.role,
+          text: entry.text,
+        }),
+      }),
+    }
+  );
+  // Re-fetch rather than trust the POST response, so the returned list
+  // is always Flowable's actual current state (same pattern addComment
+  // used to follow against the Node route).
+  return getProcessInstanceComments(processInstanceId);
+}
+
+// ─────────────────────────────────────────────────────────────
+// ATTACHMENTS — native Flowable attachment resource. Uploads are
+// task-scoped (that's the only Flowable create-attachment endpoint),
+// but Flowable links each attachment to the owning process instance
+// automatically, so listing by processInstanceId still finds them —
+// matches the old getAttachments(processInstanceId) behavior of
+// showing everything uploaded across the audit's whole lifetime, not
+// just the currently-open task.
+// ─────────────────────────────────────────────────────────────
+
+export interface FlowableAttachment {
+  id: string;
+  name: string;
+  description: string | null;
+  type: string | null;
+  taskId: string | null;
+  processInstanceId: string | null;
+  url: string | null;        // only set for externalUrl attachments (not used here)
+  contentUrl: string | null; // relative Flowable path for binary content
+  time: string;
+  userId: string | null;
+}
+
+export async function getProcessInstanceAttachments(
+  processInstanceId: string
+): Promise<FlowableAttachment[]> {
+  return flowableFetch<FlowableAttachment[]>(
+    `/runtime/process-instances/${processInstanceId}/attachments`
+  );
+}
+
+/** Flowable's attachment endpoint takes exactly one file per multipart
+ *  request, so multiple files means multiple sequential calls. */
+async function uploadOneAttachment(
+  taskId: string,
+  file: File,
+  uploadedBy: string
+): Promise<FlowableAttachment> {
+  const form = new FormData();
+  form.append('name', file.name);
+  form.append('type', file.type || 'application/octet-stream');
+  // same author-attribution caveat as comments — Flowable stamps
+  // userId from the shared service account, so the real uploader
+  // goes in description instead.
+  form.append('description', uploadedBy);
+  form.append('file', file);
+
+  const res = await fetch(`${FLOWABLE_BASE}/runtime/tasks/${taskId}/attachments`, {
+    method: 'POST',
+    headers: { Authorization: HEADERS.Authorization }, // no Content-Type — browser sets the multipart boundary
+    body: form,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Flowable API error [${res.status}]: ${await res.text()}`);
+  }
+  return res.json();
+}
+
+export async function uploadAttachments(
+  taskId: string,
+  files: File[],
+  uploadedBy: string
+): Promise<FlowableAttachment[]> {
+  const results: FlowableAttachment[] = [];
+  for (const file of files) {
+    results.push(await uploadOneAttachment(taskId, file, uploadedBy));
+  }
+  return results;
+}
+
+/** A plain <a href> won't work for attachment content: Flowable requires
+ *  Basic Auth on every request and Node here is only a passthrough proxy
+ *  (no cookie/session auth), so a bare link click reaches Flowable with
+ *  no credentials and gets a 401. Fetch authenticated, then save the blob. */
+export async function downloadAttachment(
+  processInstanceId: string,
+  attachmentId: string,
+  fileName: string
+): Promise<void> {
+  const res = await fetch(
+    `${FLOWABLE_BASE}/runtime/process-instances/${processInstanceId}/attachments/${attachmentId}/content`,
+    { headers: { Authorization: HEADERS.Authorization } }
+  );
+  if (!res.ok) throw new Error(`Failed to download attachment [${res.status}]`);
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 // ─────────────────────────────────────────────────────────────
 // 8. GET DASHBOARD STATS
 //    Called from: Dashboard.tsx
@@ -448,6 +650,492 @@ export async function cancelProcessInstance(
     `/runtime/process-instances/${processInstanceId}`,
     { method: 'DELETE' }
   );
+}
+
+// ─────────────────────────────────────────────────────────────
+// OBSERVATION WORKFLOW  (processDefinitionKey: auditObservationWorkflow)
+//    Called from: CreateObservation.tsx, ObservationTask.tsx,
+//                 ObservationsList.tsx, MyTasks.tsx
+// ─────────────────────────────────────────────────────────────
+
+/** Task keys that belong to auditObservationWorkflow. MyTasks.tsx uses
+ *  this to route a task to /observations/tasks/:id instead of /tasks/:id. */
+export const OBSERVATION_TASK_KEYS = [
+  'submitCorrectiveAction',
+  'reviewCorrectiveAction',
+  'approveExtensionCommercial',
+  'approveExtensionFunctional',
+] as const;
+
+export function isObservationTask(
+  task: Pick<FlowableTask, 'taskDefinitionKey'>
+): boolean {
+  return (OBSERVATION_TASK_KEYS as readonly string[]).includes(task.taskDefinitionKey);
+}
+
+// ─────────────────────────────────────────────────────────────
+// CANDIDATE-GROUP TASKS (Option B — commercialHead / functionalHead)
+//    approveExtensionCommercial / approveExtensionFunctional have no
+//    direct assignee in the BPMN — only flowable:candidateGroups — so
+//    getTasksByAssignee() never surfaces them to anyone. These helpers
+//    let MyTasks.tsx query by group instead, and let ObservationTask.tsx
+//    claim a task before completing it.
+//    Called from: MyTasks.tsx, ObservationTask.tsx
+// ─────────────────────────────────────────────────────────────
+
+/** Maps an observation-workflow taskDefinitionKey to the Flowable
+ *  candidate group that can claim it. Only the two approval tasks go
+ *  through group claiming — everything else is assigned directly. */
+export const OBSERVATION_CANDIDATE_GROUPS: Record<string, string> = {
+  approveExtensionCommercial: 'commercialHead',
+  approveExtensionFunctional: 'functionalHead',
+};
+
+/** Fetch unclaimed tasks visible to one or more candidate groups.
+ *  Dedupes across groups, same pattern as getTasksByAssignee's
+ *  assignee/displayName dedupe. Returns [] for an empty group list so
+ *  callers with no group membership don't need to branch. */
+export async function getTasksByCandidateGroups(
+  groups: string[]
+): Promise<FlowableTask[]> {
+  if (!groups.length) return [];
+
+  const results = await Promise.allSettled(
+    groups.map((g) =>
+      flowableFetch<{ data: FlowableTask[] }>(
+        `/runtime/tasks?candidateGroup=${encodeURIComponent(g)}&size=100`
+      ).then((d) => d.data || [])
+    )
+  );
+
+  const seen = new Set<string>();
+  const tasks: FlowableTask[] = [];
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      for (const t of r.value) {
+        if (!seen.has(t.id)) {
+          seen.add(t.id);
+          tasks.push(t);
+        }
+      }
+    }
+  }
+  return tasks;
+}
+
+/** Claim an unassigned candidate-group task for the given user so it can
+ *  then be completed. Flowable expects a task to be claimed (assignee
+ *  set) before a specific user completes it — completing a merely
+ *  candidate-visible task can otherwise leave the audit trail showing no
+ *  owner. Safe to call when already assigned to this same user. */
+export async function claimTask(taskId: string, userId: string): Promise<void> {
+  await flowableFetch<void>(`/runtime/tasks/${taskId}`, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'claim', assignee: userId }),
+  });
+}
+
+// Fields per Annexure-1 (FR-01). auditeeId, observationDescription and
+// dueDate are required; everything else is optional context. auditorId is
+// filled in by the caller from the logged-in user, not the form itself.
+export interface ObservationStartPayload {
+  auditeeId:              string;
+  auditorId:              string;
+  auditId?:               string;
+  auditName?:             string;
+  projectName?:           string;
+  department?:            string;
+  observationDate?:       string;
+  observationCategory?:   string;
+  areaOfObservation?:     string;
+  observationDescription: string;
+  rootCause?:             string;
+  riskRating?:            string;
+  referenceClause?:       string;
+  evidenceOfObservation?: string;
+  dueDate:                string;
+}
+
+export async function startObservationProcess(
+  payload: ObservationStartPayload
+): Promise<ProcessInstance> {
+  const variables: FlowableVariable[] = Object.entries(payload)
+    .filter(([, v]) => v !== undefined && v !== '')
+    .map(([name, value]) => ({ name, value: value as string, type: 'string' as const }));
+
+  return flowableFetch<ProcessInstance>('/runtime/process-instances', {
+    method: 'POST',
+    body: JSON.stringify({
+      processDefinitionKey: 'auditObservationWorkflow',
+      variables,
+    }),
+  });
+}
+
+// Flattened view of one observation's own process variables — used by
+// ObservationTask.tsx's header and any future detail/summary screen.
+export interface ObservationSummary {
+  observationId:          string;
+  auditorId:              string;
+  auditeeId:              string;
+  observationDescription: string;
+  dueDate:                string;
+  status:                 string;
+}
+
+export async function getObservationSummary(
+  processInstanceId: string
+): Promise<ObservationSummary> {
+  const vars = await getProcessVariables(processInstanceId);
+  return {
+    observationId:          getVariableValue(vars, 'observationId'),
+    auditorId:              getVariableValue(vars, 'auditorId'),
+    auditeeId:              getVariableValue(vars, 'auditeeId'),
+    observationDescription: getVariableValue(vars, 'observationDescription'),
+    dueDate:                getVariableValue(vars, 'dueDate'),
+    status:                 getVariableValue(vars, 'status'),
+  };
+}
+
+// One row for ObservationsList.tsx — same runtime+historic merge pattern
+// as getAllProcessInstances/getAllProjects, scoped to this workflow.
+export interface ObservationInstance {
+  id:                      string; // processInstanceId
+  observationId:           string;
+  auditorId:               string;
+  auditeeId:               string;
+  observationDescription:  string;
+  dueDate:                 string;
+  status:                  string;
+  startTime:               string;
+  ended:                   boolean;
+}
+
+export async function getAllObservations(): Promise<ObservationInstance[]> {
+  const [runtime, historic] = await Promise.all([
+    flowableFetch<{ data: ProcessInstance[] }>(
+      '/runtime/process-instances?processDefinitionKey=auditObservationWorkflow&size=100'
+    ).then((r) => r.data || []).catch(() => [] as ProcessInstance[]),
+    flowableFetch<{ data: any[] }>(
+      '/history/historic-process-instances?processDefinitionKey=auditObservationWorkflow&size=100&finished=true&includeProcessVariables=true'
+    ).then((r) => r.data || []).catch(() => [] as any[]),
+  ]);
+
+  const runtimeIds = new Set(runtime.map((i) => i.id));
+
+  const runtimeObs: ObservationInstance[] = await Promise.all(
+    runtime.map(async (inst) => {
+      const vars = await getProcessVariables(inst.id);
+      return {
+        id:                     inst.id,
+        observationId:          getVariableValue(vars, 'observationId'),
+        auditorId:              getVariableValue(vars, 'auditorId'),
+        auditeeId:              getVariableValue(vars, 'auditeeId'),
+        observationDescription: getVariableValue(vars, 'observationDescription'),
+        dueDate:                getVariableValue(vars, 'dueDate'),
+        status:                 getVariableValue(vars, 'status') || 'Open',
+        startTime:              inst.startTime,
+        ended:                  inst.ended,
+      };
+    })
+  );
+
+  const historicObs: ObservationInstance[] = historic
+    .filter((i) => !runtimeIds.has(i.id))
+    .map((i) => {
+      const vars: ProcessVariable[] = (i.variables || []).map((v: any) => ({
+        name:  v.variableName ?? v.name ?? '',
+        value: v.value,
+        type:  v.variableTypeName ?? v.type ?? 'string',
+        scope: 'global',
+      }));
+      return {
+        id:                     i.id,
+        observationId:          getVariableValue(vars, 'observationId'),
+        auditorId:              getVariableValue(vars, 'auditorId'),
+        auditeeId:              getVariableValue(vars, 'auditeeId'),
+        observationDescription: getVariableValue(vars, 'observationDescription'),
+        dueDate:                getVariableValue(vars, 'dueDate'),
+        status:                 getVariableValue(vars, 'status') || 'Closed',
+        startTime:              i.startTime,
+        ended:                  true,
+      };
+    });
+
+  return [...runtimeObs, ...historicObs];
+}
+
+// ─────────────────────────────────────────────────────────────
+// ATR OBSERVATION LIFECYCLE  (processDefinitionKey: ATR_OBSERVATION_LIFECYCLE)
+// + ATR EXTENSION APPROVAL   (CMMN case key: ATR_EXTENSION_APPROVAL)
+//
+// This is the NEW workflow defined by ATR_OBSERVATION_LIFECYCLE_bpmn20.xml
+// and ATR_EXTENSION_APPROVAL_cmmn.xml. It is intentionally separate from
+// the OBSERVATION WORKFLOW block above (auditObservationWorkflow), which
+// stays untouched. Task keys, variable names and process/case keys below
+// come straight from the XML — nothing here is hardcoded business logic,
+// it only reflects what the workflow definitions declare.
+//
+// Called from: ObservationTask.tsx, MyTasks.tsx, CreateAtrObservation.tsx
+// ─────────────────────────────────────────────────────────────
+
+export const ATR_PROCESS_KEY = 'ATR_OBSERVATION_LIFECYCLE';
+export const ATR_CASE_KEY = 'ATR_EXTENSION_APPROVAL';
+
+/** userTask ids from the BPMN — assigned directly to auditeeId / auditorId. */
+export const ATR_OBSERVATION_TASK_KEYS = [
+  'auditeeSubmitAction',
+  'auditorReviewEvidence',
+] as const;
+
+/** humanTask ids from the CMMN case — assigned directly to
+ *  commercialHeadId / functionalHeadId (no candidate-group claiming
+ *  needed, unlike the old approveExtensionCommercial/Functional tasks). */
+export const ATR_CASE_TASK_KEYS = [
+  'commercialHeadApprovalTask',
+  'functionalHeadApprovalTask',
+] as const;
+
+export function isAtrObservationTask(
+  task: Pick<FlowableTask, 'taskDefinitionKey'>
+): boolean {
+  return (ATR_OBSERVATION_TASK_KEYS as readonly string[]).includes(task.taskDefinitionKey);
+}
+
+export function isAtrCaseTask(
+  task: Pick<FlowableTask, 'taskDefinitionKey'>
+): boolean {
+  return (ATR_CASE_TASK_KEYS as readonly string[]).includes(task.taskDefinitionKey);
+}
+
+/** True for any task belonging to the new ATR workflow (BPMN or CMMN side).
+ *  MyTasks.tsx uses this to route to /observations/tasks/:id, same pattern
+ *  as isObservationTask() for the old workflow. */
+export function isAtrTask(task: Pick<FlowableTask, 'taskDefinitionKey'>): boolean {
+  return isAtrObservationTask(task) || isAtrCaseTask(task);
+}
+
+// ── CMMN fetch helper ───────────────────────────────────────────
+// Mirrors flowableFetch() but goes through the /cmmn-flowable-api proxy
+// (see server.js), which points at Flowable's CMMN REST app rather than
+// the BPMN process-api app. Needed because commercialHeadApprovalTask /
+// functionalHeadApprovalTask live in the CMMN engine.
+const FLOWABLE_CMMN_BASE = 'http://localhost:3000/cmmn-flowable-api';
+
+async function cmmnFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const url = `${FLOWABLE_CMMN_BASE}${endpoint}`;
+  const response = await fetch(url, {
+    ...options,
+    headers: { ...HEADERS, ...(options.headers || {}) },
+  });
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Flowable CMMN API error [${response.status}]: ${errorText}`);
+  }
+  if (response.status === 204) return {} as T;
+  return response.json() as Promise<T>;
+}
+
+export interface AtrObservationStartPayload {
+  observationId:    string;
+  auditorId:        string;
+  auditeeId:         string;
+  targetDate:        string;
+  department?:       string;
+  category?:         string;
+  priority?:         string;
+  /** Needed up-front because the CMMN case tasks use direct
+   *  flowable:assignee="${commercialHeadId}" / "${functionalHeadId}" —
+   *  there's no candidate-group fallback in this workflow, so these must
+   *  be resolved before the extension branch can ever be reached. */
+  commercialHeadId:  string;
+  functionalHeadId:  string;
+  observationDescription?: string;
+  auditName?:        string;
+  projectName?:      string;
+}
+
+export async function startAtrObservationProcess(
+  payload: AtrObservationStartPayload
+): Promise<ProcessInstance> {
+  const variables: FlowableVariable[] = Object.entries(payload)
+    .filter(([, v]) => v !== undefined && v !== '')
+    .map(([name, value]) => ({ name, value: value as string, type: 'string' as const }));
+
+  return flowableFetch<ProcessInstance>('/runtime/process-instances', {
+    method: 'POST',
+    body: JSON.stringify({
+      processDefinitionKey: ATR_PROCESS_KEY,
+      // observationId doubles as the business key so the CMMN case
+      // (started later, on the extension branch) can correlate back to
+      // this same process instance, per the XML documentation.
+      businessKey: payload.observationId,
+      variables,
+    }),
+  });
+}
+
+export interface AtrObservationSummary {
+  observationId:            string;
+  auditorId:                string;
+  auditeeId:                string;
+  observationDescription:   string;
+  targetDate:                string;
+  status:                    string;
+  commercialHeadId:          string;
+  functionalHeadId:          string;
+}
+
+export async function getAtrObservationSummary(
+  processInstanceId: string
+): Promise<AtrObservationSummary> {
+  const vars = await getProcessVariables(processInstanceId);
+  return {
+    observationId:          getVariableValue(vars, 'observationId'),
+    auditorId:              getVariableValue(vars, 'auditorId'),
+    auditeeId:              getVariableValue(vars, 'auditeeId'),
+    observationDescription: getVariableValue(vars, 'observationDescription'),
+    targetDate:             getVariableValue(vars, 'targetDate'),
+    status:                 getVariableValue(vars, 'status'),
+    commercialHeadId:       getVariableValue(vars, 'commercialHeadId'),
+    functionalHeadId:       getVariableValue(vars, 'functionalHeadId'),
+  };
+}
+
+export interface AtrObservationInstance {
+  id:                      string; // processInstanceId
+  observationId:           string;
+  auditorId:               string;
+  auditeeId:               string;
+  observationDescription:  string;
+  targetDate:              string;
+  status:                  string;
+  startTime:               string;
+  ended:                   boolean;
+}
+
+export async function getAllAtrObservations(): Promise<AtrObservationInstance[]> {
+  const [runtime, historic] = await Promise.all([
+    flowableFetch<{ data: ProcessInstance[] }>(
+      `/runtime/process-instances?processDefinitionKey=${ATR_PROCESS_KEY}&size=100`
+    ).then((r) => r.data || []).catch(() => [] as ProcessInstance[]),
+    flowableFetch<{ data: any[] }>(
+      `/history/historic-process-instances?processDefinitionKey=${ATR_PROCESS_KEY}&size=100&finished=true&includeProcessVariables=true`
+    ).then((r) => r.data || []).catch(() => [] as any[]),
+  ]);
+
+  const runtimeIds = new Set(runtime.map((i) => i.id));
+
+  const runtimeObs: AtrObservationInstance[] = await Promise.all(
+    runtime.map(async (inst) => {
+      const vars = await getProcessVariables(inst.id);
+      return {
+        id:                     inst.id,
+        observationId:          getVariableValue(vars, 'observationId'),
+        auditorId:              getVariableValue(vars, 'auditorId'),
+        auditeeId:              getVariableValue(vars, 'auditeeId'),
+        observationDescription: getVariableValue(vars, 'observationDescription'),
+        targetDate:             getVariableValue(vars, 'targetDate'),
+        status:                 getVariableValue(vars, 'status') || 'OPEN',
+        startTime:              inst.startTime,
+        ended:                  inst.ended,
+      };
+    })
+  );
+
+  const historicObs: AtrObservationInstance[] = historic
+    .filter((i) => !runtimeIds.has(i.id))
+    .map((i) => {
+      const vars: ProcessVariable[] = (i.variables || []).map((v: any) => ({
+        name:  v.variableName ?? v.name ?? '',
+        value: v.value,
+        type:  v.variableTypeName ?? v.type ?? 'string',
+        scope: 'global',
+      }));
+      return {
+        id:                     i.id,
+        observationId:          getVariableValue(vars, 'observationId'),
+        auditorId:              getVariableValue(vars, 'auditorId'),
+        auditeeId:              getVariableValue(vars, 'auditeeId'),
+        observationDescription: getVariableValue(vars, 'observationDescription'),
+        targetDate:             getVariableValue(vars, 'targetDate'),
+        status:                 getVariableValue(vars, 'status') || 'CLOSED',
+        startTime:              i.startTime,
+        ended:                  true,
+      };
+    });
+
+  return [...runtimeObs, ...historicObs];
+}
+
+/** CMMN-side equivalent of getTasksByAssignee — queries case tasks
+ *  (commercialHeadApprovalTask / functionalHeadApprovalTask) directly
+ *  assigned to this user. Endpoint path follows Flowable's standard CMMN
+ *  REST convention (/cmmn-runtime/tasks); confirm against your Flowable
+ *  deployment if it 404s. */
+export async function getAtrCaseTasksByAssignee(userId: string): Promise<FlowableTask[]> {
+  if (!userId) return [];
+  try {
+    const data = await cmmnFetch<{ data: FlowableTask[] }>(
+      `/cmmn-runtime/tasks?assignee=${encodeURIComponent(userId)}&size=100`
+    );
+    return data.data || [];
+  } catch {
+    return [];
+  }
+}
+
+export async function getAtrCaseTaskById(taskId: string): Promise<FlowableTask> {
+  return cmmnFetch<FlowableTask>(`/cmmn-runtime/tasks/${taskId}`);
+}
+
+export async function getAtrCaseVariables(caseInstanceId: string): Promise<ProcessVariable[]> {
+  const data = await cmmnFetch<ProcessVariable[]>(
+    `/cmmn-runtime/case-instances/${caseInstanceId}/variables`
+  );
+  return Array.isArray(data) ? data : [];
+}
+
+/** Completes a commercialHeadApprovalTask / functionalHeadApprovalTask,
+ *  setting commercialDecision / functionalDecision per the CMMN sentries. */
+export async function completeAtrCaseTask(
+  taskId: string,
+  variables: Record<string, string>
+): Promise<void> {
+  await cmmnFetch<void>(`/cmmn-runtime/tasks/${taskId}`, {
+    method: 'POST',
+    body: JSON.stringify({
+      action: 'complete',
+      variables: Object.entries(variables).map(([name, value]) => ({
+        name, value, type: 'string' as const,
+      })),
+    }),
+  });
+}
+
+/** Resolves the users configured for a given role so CreateAtrObservation
+ *  can default commercialHeadId / functionalHeadId instead of the auditor
+ *  having to know Flowable user ids. Reuses the existing profile/group
+ *  data (getAllUsers + getAllUserProfiles / getUserGroups) rather than
+ *  hardcoding anything — if nobody is configured with that role yet, the
+ *  caller falls back to a manual picker. */
+export async function getUsersByRole(
+  role: 'commercialHead' | 'functionalHead'
+): Promise<FlowableUser[]> {
+  const roleLabel = role === 'commercialHead' ? 'Commercial Head' : 'Functional Head';
+  const [users, profiles] = await Promise.all([getAllUsers(), getAllUserProfiles()]);
+  const byProfile = users.filter((u) => profiles.get(u.id)?.role === roleLabel);
+  if (byProfile.length) return byProfile;
+
+  // Fall back to Flowable identity group membership (${role} group id),
+  // matching how the old candidate-group tasks resolved these same roles.
+  const groupChecks = await Promise.allSettled(
+    users.map(async (u) => ({ u, groups: await getUserGroups(u.id) }))
+  );
+  return groupChecks
+    .filter((r): r is PromiseFulfilledResult<{ u: FlowableUser; groups: string[] }> => r.status === 'fulfilled')
+    .filter((r) => r.value.groups.includes(role))
+    .map((r) => r.value.u);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -588,6 +1276,95 @@ export async function getAllUsers(): Promise<FlowableUser[]> {
 // GET /identity/users/{id}
 export async function getUserById(userId: string): Promise<FlowableUser> {
   return flowableFetch<FlowableUser>(`/identity/users/${userId}`);
+}
+
+// GET /identity/users/{id}/groups
+// Used by loginWithFlowable() to populate AuthUser.groups, so that
+// candidate-group tasks (e.g. approveExtensionCommercial /
+// approveExtensionFunctional) actually surface for the right people in
+// MyTasks.tsx instead of never appearing because groups was always [].
+//
+// Returns plain group-id strings (e.g. "commercialHead") so callers like
+// getUsersByRole() can safely do `.includes(role)`. The Flowable endpoint
+// itself returns an envelope object ({ data: [...], total, ... }), NOT a
+// bare array — returning that envelope directly previously broke
+// getUsersByRole's `.groups.includes(role)` check with a TypeError
+// ("includes is not a function"), which silently fell through to the
+// "No user with role ... found" empty state even when a match existed.
+export async function getUserGroups(userId: string): Promise<string[]> {
+  try {
+    const data = await flowableFetch<{ data: { id: string }[] }>(
+      `/identity/groups?member=${encodeURIComponent(userId)}`
+    );
+    return (data.data || []).map((g) => g.id);
+  } catch {
+    // Non-fatal — user just won't see group-visible tasks until this
+    // resolves (e.g. Flowable identity groups endpoint unreachable).
+    return [];
+  }
+}
+
+export interface FlowableGroup {
+  id:   string;
+  name: string;
+  type: string;
+}
+
+// GET /identity/groups
+// Lists every group (Auditee, Auditor, Commercial head Group, Functional
+// head group, ...) so the admin "Manage Users" screen can render the
+// group list on the left without it being hardcoded in the component.
+export async function getAllGroups(): Promise<FlowableGroup[]> {
+  const data = await flowableFetch<{ data: FlowableGroup[] }>(
+    '/identity/groups?sort=name'
+  );
+  return data.data || [];
+}
+
+// GET /identity/users?memberOfGroup={groupId}
+// Used when a group is selected in the admin UI: fetches only the users
+// that belong to that group directly from Flowable's identity API,
+// rather than calling getAllUsers() and filtering in the browser (which
+// silently produced wrong/empty lists whenever a user's group membership
+// wasn't already known on the client, e.g. right after a group is
+// created or a member is added elsewhere).
+export async function getUsersInGroup(groupId: string): Promise<FlowableUser[]> {
+  const data = await flowableFetch<{ data: FlowableUser[] }>(
+    `/identity/users?memberOfGroup=${encodeURIComponent(groupId)}&size=100`
+  );
+  return data.data || [];
+}
+
+// POST /identity/groups
+export async function createGroup(payload: { id: string; name: string; type: string }): Promise<FlowableGroup> {
+  return flowableFetch<FlowableGroup>('/identity/groups', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// DELETE /identity/groups/{groupId}
+export async function deleteGroup(groupId: string): Promise<void> {
+  await flowableFetch<void>(`/identity/groups/${encodeURIComponent(groupId)}`, {
+    method: 'DELETE',
+  });
+}
+
+// POST /identity/groups/{groupId}/members  — add an existing user to a group
+export async function addUserToGroup(groupId: string, userId: string): Promise<void> {
+  await flowableFetch<void>(`/identity/groups/${encodeURIComponent(groupId)}/members`, {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  });
+}
+
+// DELETE /identity/groups/{groupId}/members/{userId}  — remove a user from a group
+// (not the same as deleteUser — this only revokes membership in this one group)
+export async function removeUserFromGroup(groupId: string, userId: string): Promise<void> {
+  await flowableFetch<void>(
+    `/identity/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`,
+    { method: 'DELETE' }
+  );
 }
 
 // POST /identity/users
@@ -1107,17 +1884,33 @@ export interface UserProfilePayload {
 
 /**
  * GET a single user's profile info entry.
- * Returns null if the user has no profile yet (404 from Flowable).
+ * Returns null if the user has no profile yet.
+ *
+ * We first check the key-list endpoint (`/info`, no key), which Flowable
+ * returns as 200 + [] when the user has no info entries at all. Only if
+ * a 'profile' key is actually listed do we fetch `/info/profile` for the
+ * value. This avoids firing a 404 at `/info/profile` for every user who
+ * simply hasn't been assigned a profile yet (the common case), which was
+ * previously spamming the console on every getAllUserProfiles() call.
  */
 export async function getUserProfile(userId: string): Promise<UserProfile | null> {
   try {
+    const keys = await flowableFetch<{ data?: { key: string }[] } | { key: string }[]>(
+      `/identity/users/${encodeURIComponent(userId)}/info`
+    );
+    const list = Array.isArray(keys) ? keys : keys.data || [];
+    if (!list.some((k) => k.key === 'profile')) {
+      // No 'profile' info entry exists for this user — nothing to fetch.
+      return null;
+    }
+
     const res = await flowableFetch<{ key: string; value: string }>(
       `/identity/users/${encodeURIComponent(userId)}/info/profile`
     );
     const parsed = JSON.parse(res.value);
     return { userId, ...parsed } as UserProfile;
   } catch {
-    // No profile info entry yet for this user — treat as "no profile"
+    // Info-list call itself failed (network/user missing) — treat as "no profile"
     return null;
   }
 }
@@ -1129,12 +1922,17 @@ export async function getUserProfile(userId: string): Promise<UserProfile | null
  */
 export async function getAllUserProfiles(): Promise<Map<string, UserProfile>> {
   const users = await getAllUsers();
-  const entries = await Promise.all(
+  // allSettled instead of all: one user's info lookup failing (e.g. bad
+  // id, transient network error) shouldn't blank out every other profile.
+  const results = await Promise.allSettled(
     users.map(async (u): Promise<[string, UserProfile] | null> => {
       const profile = await getUserProfile(u.id);
       return profile ? [u.id, profile] : null;
     })
   );
+  const entries = results
+    .filter((r): r is PromiseFulfilledResult<[string, UserProfile] | null> => r.status === 'fulfilled')
+    .map((r) => r.value);
   return new Map(
     entries.filter((e): e is [string, UserProfile] => e !== null)
   );
@@ -1180,4 +1978,400 @@ export async function deleteUserProfile(userId: string): Promise<void> {
   } catch {
     // Already gone / never existed — nothing to do
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// GET TASK LOCAL VARIABLES
+//    Called from: AuditChecklist.tsx
+//    Needed to read "stepIndex" — the 0-based position Flowable
+//    assigns to the current instance of the sequential multi-instance
+//    checklist task (see auditManagementWorkflow.bpmn20.xml). Reading
+//    this instead of matching on task name/count is what makes step
+//    completion state exact, even with duplicate step names.
+// ─────────────────────────────────────────────────────────────
+ 
+export async function getTaskVariables(
+  taskId: string
+): Promise<ProcessVariable[]> {
+  try {
+    const data = await flowableFetch<ProcessVariable[] | { data: ProcessVariable[] }>(
+      `/runtime/tasks/${taskId}/variables`
+    );
+    if (Array.isArray(data)) return data;
+    return (data as any).data || [];
+  } catch {
+    // Task may have just been completed / process may have moved on
+    return [];
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// LOGIN
+//    Called from: LoginPage.tsx
+//
+//    Flowable's identity REST API has no dedicated "login" endpoint,
+//    and every other function above authenticates as the fixed
+//    admin:test service account (see HEADERS/CREDENTIALS at the top
+//    of this file) — so flowableFetch() can't be used to check a
+//    *different* user's password. Real login here is 3 steps:
+//      1. Look up the user by email using the service account
+//         (reuses getAllUsers(), already defined above).
+//      2. Re-request that same user, but with Basic Auth built from
+//         the password they just typed. Flowable returns 200 if it's
+//         correct, 401/403 if it isn't — that response IS the check.
+//      3. Read role/department off their profile info entry (reuses
+//         getUserProfile(), already defined above) and map the
+//         free-text role from the Invite User form (Users.tsx) onto
+//         this app's 'admin' | 'auditor' split.
+// ─────────────────────────────────────────────────────────────
+
+export class FlowableLoginError extends Error {}
+
+export interface LoginResult {
+  id:         string;
+  name:       string;
+  email:      string;
+  role:       'admin' | 'auditor' | 'auditee' | 'commercialHead' | 'functionalHead';
+  department?: string;
+  groups:     string[];
+}
+
+/** Re-authenticates as `userId` using the password the user typed.
+ *  Throws FlowableLoginError if it's wrong. */
+async function verifyPassword(userId: string, password: string): Promise<void> {
+  const res = await fetch(`${FLOWABLE_BASE}/identity/users/${encodeURIComponent(userId)}`, {
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Basic ${btoa(`${userId}:${password}`)}`,
+    },
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new FlowableLoginError('Invalid email or password.');
+  }
+  if (!res.ok) {
+    throw new FlowableLoginError('Could not reach the identity service.');
+  }
+}
+
+/** Only the 'Administrator' option from the Invite User role dropdown
+ *  counts as an app admin — everything else (Lead Auditor, Plant
+ *  Manager, Safety Officer, etc.) is treated as 'auditor'. Adjust
+ *  here if more roles should map to 'admin'.
+ *
+ *  BOOTSTRAP FALLBACK: Flowable's own seed identity user (id 'admin')
+ *  is never created through this app's Invite User form, so it has no
+ *  companion profile entry — getUserProfile() returns null for it and,
+ *  without this fallback, mapRole(undefined) would send it to 'auditor'
+ *  forever, permanently locking everyone out of Create Audit and
+ *  Administration (nobody could even open Users & Roles to fix it,
+ *  since that page itself requires admin). Treating the literal 'admin'
+ *  userId as an admin, regardless of profile state, is the standard
+ *  break-glass account pattern and guarantees at least one way in. */
+/** Flowable group ids are free-text, admin-created strings — per
+ *  Users > Groups in the Flowable app they're literally "Auditee",
+ *  "Auditor", "Commercial head Group", "Functional head group" (mixed
+ *  case, sometimes with a trailing "Group"/"group"). Comparing them
+ *  case-sensitively against camelCase constants like 'commercialHead'
+ *  never matches, so every group-based check below silently failed and
+ *  fell through to the 'auditor' default — the bug that let auditees
+ *  land in the app as full auditors. Normalize both sides (lowercase,
+ *  strip everything but letters) before comparing. */
+function normalizeGroupToken(s: string): string {
+  return s.toLowerCase().replace(/[^a-z]/g, '');
+}
+
+function mapRole(
+  profileRole: string | undefined,
+  userId: string,
+  groups: string[]
+): LoginResult['role'] {
+  if (profileRole === 'Administrator' || userId === 'admin') return 'admin';
+
+  const normGroups = groups.map(normalizeGroupToken);
+  const inGroup = (needle: string) =>
+    normGroups.some((g) => g.includes(needle));
+
+  if (inGroup('commercialhead') || profileRole === 'Commercial Head') return 'commercialHead';
+  if (inGroup('functionalhead') || profileRole === 'Functional Head') return 'functionalHead';
+  if (inGroup('auditee') || profileRole === 'Auditee') return 'auditee';
+  if (inGroup('auditor') || profileRole === 'Lead Auditor' || profileRole === 'Auditor') return 'auditor';
+
+  // No recognizable group and no profile-role text — don't silently
+  // grant auditor access. Surface it as a real login error instead of
+  // guessing a role, so a misconfigured account fails loudly and gets
+  // fixed in Flowable rather than quietly running with the wrong
+  // permissions.
+  throw new FlowableLoginError(
+    'Your account is not assigned to a recognized role group in Flowable (Auditee, Auditor, Commercial head Group, or Functional head group). Contact your administrator.'
+  );
+}
+
+/**
+ * Authenticate against Flowable and return the details LoginPage.tsx
+ * needs to call AuthContext's login(). Throws FlowableLoginError
+ * (safe to show directly to the user) on bad credentials.
+ */
+export async function loginWithFlowable(email: string, password: string): Promise<LoginResult> {
+  const users = await getAllUsers();
+  const match = users.find(
+    (u) => u.email.toLowerCase() === email.trim().toLowerCase()
+  );
+
+  if (!match) {
+    throw new FlowableLoginError('Invalid email or password.');
+  }
+
+  await verifyPassword(match.id, password);
+
+  const [profile, groups] = await Promise.all([
+    getUserProfile(match.id),
+    getUserGroups(match.id),
+  ]);
+
+  const role = mapRole(profile?.role, match.id, groups);
+
+  // Self-heal: if we just granted admin via the bootstrap fallback (no
+  // profile, or a profile whose role text isn't 'Administrator' yet),
+  // write one now so Users & Roles shows this account correctly too,
+  // instead of it looking like a role-less user forever. Best-effort —
+  // login should still succeed even if this write fails.
+  if (role === 'admin' && profile?.role !== 'Administrator') {
+    try {
+      await saveUserProfile({
+        userId:           match.id,
+        role:             'Administrator',
+        department:       profile?.department || '',
+        status:           profile?.status || 'Active',
+        twoFactorEnabled: profile?.twoFactorEnabled || false,
+      });
+    } catch {
+      // Non-fatal — they'll still get admin access this session via the
+      // bootstrap fallback above even if the write didn't stick.
+    }
+  }
+
+  return {
+    id:         match.id,
+    name:       `${match.firstName} ${match.lastName}`.trim(),
+    email:      match.email,
+    role,
+    department: profile?.department,
+    groups,
+  };
+}
+
+// ═════════════════════════════════════════════════════════════
+// ATR WORKFLOW AUTOMATION
+//
+// The BPMN/CMMN XML deliberately has NO Java backend — every step that
+// isn't a plain human task (external-worker jobs, CMMN case start, the
+// signal that resumes the parked BPMN process, plain "system" CMMN
+// tasks) has to be driven by this React app itself. This section is
+// that automation layer. See ATR_OBSERVATION_LIFECYCLE_bpmn20.xml and
+// ATR_EXTENSION_APPROVAL_cmmn.xml for the authoritative REST call
+// sequence each piece here follows.
+//
+// NOTIFICATIONS ARE STUBBED FOR NOW: sendNotification() below just logs
+// / returns immediately instead of calling a real email/SMS provider.
+// Swap its body out later — every call site here already awaits it, so
+// wiring in a real integration won't require touching the workflow
+// logic again.
+// ═════════════════════════════════════════════════════════════
+
+/** Placeholder notification hook. Replace with a real email/SMS/in-app
+ *  call later; kept as an explicit named function (rather than inlining
+ *  a no-op at each call site) so there's exactly one place to upgrade. */
+async function sendNotification(kind: string, payload: Record<string, string>): Promise<void> {
+  // eslint-disable-next-line no-console
+  console.info(`[notification:${kind}]`, payload);
+}
+
+// ── Notification "jobs" (BPMN sendAuditeeNotification / sendClosureNotification) ──
+// These used to be flowable:type="external-worker" service tasks requiring
+// React to poll POST /runtime/jobs/acquire. That endpoint 404s on this
+// deployment — it only exposes the standard management/jobs REST surface
+// (see management/jobs docs), not Flowable's separate External Worker
+// Task API. Since the BPMN steps are now plain scriptTasks that complete
+// themselves automatically (see ATR_OBSERVATION_LIFECYCLE_bpmn20.xml),
+// there's nothing left to poll or complete here — these just fire the
+// notification stub directly from the UI action that triggers them.
+
+/** Call right after starting the process (startAtrObservationProcess). */
+export async function completeAuditeeNotificationJob(
+  _processInstanceId: string,
+  observationId: string,
+  auditeeId: string
+): Promise<boolean> {
+  await sendNotification('auditee-assigned', { observationId, auditeeId });
+  return true;
+}
+
+/** Call right after the auditor approves (reviewDecision=APPROVE). */
+export async function completeClosureNotificationJob(
+  _processInstanceId: string,
+  observationId: string,
+  auditeeId: string
+): Promise<boolean> {
+  await sendNotification('observation-closed', { observationId, auditeeId });
+  return true;
+}
+
+// ── CMMN case start (extension branch) ──────────────────────────────
+// Per the XML: "NO JAVA LISTENER starts the CMMN case anymore — React
+// must start it itself, right after it completes auditeeSubmitAction
+// with action=EXTENSION."
+export interface AtrExtensionCaseStartPayload {
+  observationId:           string;
+  auditeeId:                string;
+  commercialHeadId:         string;
+  functionalHeadId:         string;
+  targetDate:               string;
+  requestedExtensionDate:   string;
+}
+
+export async function startAtrExtensionCase(
+  payload: AtrExtensionCaseStartPayload
+): Promise<{ id: string }> {
+  const variables: FlowableVariable[] = Object.entries(payload)
+    .filter(([, v]) => v !== undefined && v !== '')
+    .map(([name, value]) => ({ name, value: value as string, type: 'string' as const }));
+
+  return cmmnFetch<{ id: string }>('/cmmn-runtime/case-instances', {
+    method: 'POST',
+    body: JSON.stringify({
+      caseDefinitionKey: 'ATR_EXTENSION_APPROVAL',
+      // Same businessKey as the BPMN process (observationId) so the two
+      // can be correlated back to each other later.
+      businessKey: payload.observationId,
+      variables,
+    }),
+  });
+}
+
+// ── Signal the parked BPMN process back to life ─────────────────────
+// Per the XML: find the waiting execution at waitForExtensionResult on
+// the BPMN process sharing this observation's businessKey, then signal it.
+async function findExecutionByActivity(
+  processInstanceId: string,
+  activityId: string
+): Promise<string | null> {
+  const res = await flowableFetch<{ data: { id: string }[] }>(
+    `/runtime/executions?processInstanceId=${processInstanceId}&activityId=${activityId}`
+  );
+  return res.data?.[0]?.id ?? null;
+}
+
+async function findAtrProcessInstanceIdByObservationId(observationId: string): Promise<string | null> {
+  const res = await flowableFetch<{ data: { id: string }[] }>(
+    `/runtime/process-instances?processDefinitionKey=${ATR_PROCESS_KEY}&businessKey=${encodeURIComponent(observationId)}`
+  );
+  return res.data?.[0]?.id ?? null;
+}
+
+/** Resumes ATR_OBSERVATION_LIFECYCLE past waitForExtensionResult.
+ *  Called from advanceExtensionCase() once the CMMN case reaches
+ *  signalBpmnApprovedTask / signalBpmnRejectedTask. */
+export async function signalExtensionCompleted(
+  observationId: string,
+  approved: boolean
+): Promise<void> {
+  const processInstanceId = await findAtrProcessInstanceIdByObservationId(observationId);
+  if (!processInstanceId) {
+    throw new Error(
+      `signalExtensionCompleted: no running ATR_OBSERVATION_LIFECYCLE instance found for observation ${observationId}`
+    );
+  }
+  const executionId = await findExecutionByActivity(processInstanceId, 'waitForExtensionResult');
+  if (!executionId) {
+    throw new Error(
+      `signalExtensionCompleted: process ${processInstanceId} isn't currently waiting at waitForExtensionResult`
+    );
+  }
+  await flowableFetch<void>(`/runtime/executions/${executionId}/signal`, {
+    method: 'POST',
+    body: JSON.stringify({
+      signalName: 'EXTENSION_COMPLETED',
+      variables: [{ name: 'extensionApproved', value: approved, type: 'boolean' as const }],
+    }),
+  });
+}
+
+/** Resumes ATR_OBSERVATION_LIFECYCLE past waitUntilUnblocked (the
+ *  BLOCKED review-decision branch). Call once whatever was blocking the
+ *  observation is actually resolved. */
+export async function unblockAtrObservation(observationId: string): Promise<void> {
+  const processInstanceId = await findAtrProcessInstanceIdByObservationId(observationId);
+  if (!processInstanceId) {
+    throw new Error(`unblockAtrObservation: no running instance found for observation ${observationId}`);
+  }
+  const executionId = await findExecutionByActivity(processInstanceId, 'waitUntilUnblocked');
+  if (!executionId) {
+    throw new Error(`unblockAtrObservation: process ${processInstanceId} isn't currently waiting at waitUntilUnblocked`);
+  }
+  await flowableFetch<void>(`/runtime/executions/${executionId}/trigger`, { method: 'POST' });
+}
+
+// ── CMMN case automation (the plain "system" tasks between the two
+//    human approvals and the end of the case) ───────────────────────
+// updateTargetDateTask / sendNotificationsTask / signalBpmnApprovedTask /
+// signalBpmnRejectedTask are all plain isBlocking="true" CMMN tasks with
+// no assignee — React completes them with the same call pattern as any
+// human task, it just has to notice they've become available and act
+// immediately instead of waiting for a person to click a button.
+const ATR_CASE_AUTOMATION_HANDLERS: Record<
+  string,
+  (caseInstanceId: string, observationId: string) => Promise<Record<string, string> | void>
+> = {
+  updateTargetDateTask: async (caseInstanceId) => {
+    const vars = await cmmnFetch<{ data: FlowableVariable[] } | FlowableVariable[]>(
+      `/cmmn-runtime/case-instances/${caseInstanceId}/variables`
+    );
+    const list = Array.isArray(vars) ? vars : vars.data || [];
+    const requestedExtensionDate = String(
+      list.find((v) => v.name === 'requestedExtensionDate')?.value ?? ''
+    );
+    // Per the CMMN doc: complete with targetDate = requestedExtensionDate.
+    // The BPMN process's own updateTargetDate script task (which runs
+    // right after the signal below resumes it) mirrors this onto its own
+    // targetDate variable — this call is what the CMMN side expects.
+    return { targetDate: requestedExtensionDate };
+  },
+  sendNotificationsTask: async (_caseInstanceId, observationId) => {
+    await sendNotification('extension-approved', { observationId });
+  },
+  signalBpmnApprovedTask: async (_caseInstanceId, observationId) => {
+    await signalExtensionCompleted(observationId, true);
+  },
+  signalBpmnRejectedTask: async (_caseInstanceId, observationId) => {
+    await signalExtensionCompleted(observationId, false);
+  },
+};
+
+/** Call after starting the case AND after each approval decision
+ *  (commercial or functional). Auto-completes every "system" task that
+ *  has become available, stopping as soon as it hits a task with no
+ *  automation handler (i.e. the next human approval task, or nothing
+ *  left because the case just finished/exited). Safe to call
+ *  speculatively — if nothing automatable is available yet it's a
+ *  single no-op query. */
+export async function advanceExtensionCase(
+  caseInstanceId: string,
+  observationId: string
+): Promise<void> {
+  for (let i = 0; i < 10; i++) {
+    const res = await cmmnFetch<{ data: FlowableTask[] }>(
+      `/cmmn-runtime/tasks?caseInstanceId=${caseInstanceId}&size=100`
+    );
+    const tasks = res.data || [];
+    const nextTask = tasks.find((t) => ATR_CASE_AUTOMATION_HANDLERS[t.taskDefinitionKey]);
+    if (!nextTask) return; // blocked on a human decision, or case has exited
+
+    const handler = ATR_CASE_AUTOMATION_HANDLERS[nextTask.taskDefinitionKey];
+    const resultVars = (await handler(caseInstanceId, observationId)) || {};
+    await completeAtrCaseTask(nextTask.id, resultVars);
+  }
+  // 10 iterations is more than this case can ever need (4 automation
+  // tasks max on either branch) — bailing out here means something is
+  // looping unexpectedly rather than silently hanging the UI.
 }

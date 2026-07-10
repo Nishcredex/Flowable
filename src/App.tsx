@@ -1,1000 +1,12 @@
-// // // // import { BrowserRouter } from 'react-router-dom';
-// // // // import FlowableModuleBuilder from './FlowableModuleBuilder';
-
-// // // // export function App() {
-// // // //   return (
-// // // //     <BrowserRouter>
-// // // //       <FlowableModuleBuilder />
-// // // //     </BrowserRouter>
-// // // //   );
-// // // // }
-
-// // // // ============================================================
-// // // //  App.tsx — with AuthProvider + ProtectedRoute
-// // // // ============================================================
-
-// // // import React from 'react';
-// // // import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-// // // import { AuthProvider, useAuth } from './pages/AuthContext';
-// // // import { Layout } from './components/Layout';
-// // // import { LoginPage } from './pages/Loginpage';
-// // // import { CreateAudit } from './pages/CreateAudit';
-// // // import { AuditChecklist } from './pages/AuditChecklist';
-// // // import { CompleteStep } from './pages/CompleteStep';
-// // // import { MyTasks } from './pages/MyTasks';
-// // // import { TaskDetails } from './pages/TaskDetails';
-// // // import { Dashboard } from './pages/Dashboard';
-// // // import { WorkflowView } from './pages/WorkflowView';
-// // // import { EmailReminder } from './pages/EmailReminder';
-// // // import { AuditsList } from './pages/AuditsList';
-// // // import { ChecklistLibrary } from './pages/ChecklistLibrary';
-// // // import { Projects } from './pages/Projects';
-// // // import { Reports } from './pages/Reports';
-// // // import { Users } from './pages/Users';
-// // // import { Settings } from './pages/Settings';
-// // // import AdminLayout from './pages/admin/AdminLayout';
-// // // import AdminPlaceholder from './pages/admin/AdminPlaceholder';
-// // // import AdminUsers from './pages/admin/AdminUsers';
-// // // // ── Guards ────────────────────────────────────────────────────
-
-// // // /** Redirects to /login if not logged in */
-// // // function ProtectedRoute({ children }: { children: React.ReactNode }) {
-// // //   const { user } = useAuth();
-// // //   if (!user) return <Navigate to="/login" replace />;
-// // //   return <>{children}</>;
-// // // }
-
-// // // /** Redirects auditors away from admin-only pages */
-// // // function AdminRoute({ children }: { children: React.ReactNode }) {
-// // //   const { user, isAdmin } = useAuth();
-// // //   if (!user) return <Navigate to="/login" replace />;
-// // //   if (!isAdmin) return <Navigate to="/dashboard" replace />;
-// // //   return <>{children}</>;
-// // // }
-
-// // // // ── Inner app (needs auth context) ───────────────────────────
-// // // function AppRoutes() {
-// // //   const { user } = useAuth();
-
-// // //   return (
-// // //     <Routes>
-// // //       {/* Public */}
-// // //       <Route
-// // //         path="/login"
-// // //         element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-// // //       />
-
-// // //       {/* Protected — all roles */}
-// // //       <Route path="/" element={
-// // //         <ProtectedRoute>
-// // //           <Layout>
-// // //             <Routes>
-// // //               <Route index element={<Navigate to="/dashboard" replace />} />
-// // //             </Routes>
-// // //           </Layout>
-// // //         </ProtectedRoute>
-// // //       } />
-
-// // //       <Route path="/dashboard" element={
-// // //         <ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>
-// // //       } />
-
-// // //       <Route path="/audits" element={
-// // //         <ProtectedRoute><Layout><AuditsList /></Layout></ProtectedRoute>
-// // //       } />
-
-// // //       {/* Admin only — create audit */}
-// // //       <Route path="/audits/create" element={
-// // //         <AdminRoute><Layout><CreateAudit /></Layout></AdminRoute>
-// // //       } />
-
-// // //       <Route path="/audits/manufacturing-unit-1/checklist" element={
-// // //         <ProtectedRoute><Layout><AuditChecklist /></Layout></ProtectedRoute>
-// // //       } />
-
-// // //       <Route path="/audits/manufacturing-unit-1/checklist/step-1" element={
-// // //         <ProtectedRoute><Layout><CompleteStep /></Layout></ProtectedRoute>
-// // //       } />
-
-// // //       <Route path="/workflows" element={
-// // //         <ProtectedRoute><Layout><WorkflowView /></Layout></ProtectedRoute>
-// // //       } />
-
-// // //       <Route path="/checklist-library" element={
-// // //         <ProtectedRoute><Layout><ChecklistLibrary /></Layout></ProtectedRoute>
-// // //       } />
-
-// // //       <Route path="/tasks" element={
-// // //         <ProtectedRoute><Layout><MyTasks /></Layout></ProtectedRoute>
-// // //       } />
-
-// // //       <Route path="/tasks/:taskId" element={
-// // //         <ProtectedRoute><Layout><TaskDetails /></Layout></ProtectedRoute>
-// // //       } />
-
-// // //       <Route path="/projects" element={
-// // //         <ProtectedRoute><Layout><Projects /></Layout></ProtectedRoute>
-// // //       } />
-
-// // //       <Route path="/reports" element={
-// // //         <ProtectedRoute><Layout><Reports /></Layout></ProtectedRoute>
-// // //       } />
-
-// // //       {/* Admin only — users page
-// // //       <Route path="/users" element={
-// // //         <AdminRoute><Layout><Users /></Layout></AdminRoute>
-// // //       } />
-
-// // //       <Route path="/settings" element={
-// // //         <ProtectedRoute><Layout><Settings /></Layout></ProtectedRoute>
-// // //       } /> */}
-// // //       <Route path="/admin" element={<AdminLayout />}>
-// // //         <Route index element={<Navigate to="users" replace />} />
-
-// // //         <Route path="users" element={<AdminUsers />} />
-
-// // //         <Route
-// // //           path="action-types"
-// // //           element={<AdminPlaceholder title="Action Types" />}
-// // //         />
-
-// // //         <Route
-// // //           path="workflow-definitions"
-// // //           element={<AdminPlaceholder title="Workflow Definitions" />}
-// // //         />
-
-// // //         <Route
-// // //           path="routing-rules"
-// // //           element={<AdminPlaceholder title="Routing Rules" />}
-// // //         />
-
-// // //         <Route
-// // //           path="notifications"
-// // //           element={<AdminPlaceholder title="Notifications" />}
-// // //         />
-
-// // //         <Route
-// // //           path="integrations"
-// // //           element={<AdminPlaceholder title="Integrations" />}
-// // //         />
-// // //       </Route>
-
-// // //       <Route path="/email-reminder" element={
-// // //         <ProtectedRoute><Layout><EmailReminder /></Layout></ProtectedRoute>
-// // //       } />
-
-
-// // //       {/* Fallback */}
-// // //       <Route path="*" element={<Navigate to="/dashboard" replace />} />
-// // //     </Routes>
-// // //   );
-// // // }
-
-// // // export function App() {
-// // //   return (
-// // //     <BrowserRouter>
-// // //       <AuthProvider>
-// // //         <AppRoutes />
-// // //       </AuthProvider>
-// // //     </BrowserRouter>
-// // //   );
-// // // }
-// // // // import React from 'react';
-// // // // import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-// // // // import { Layout } from './components/Layout';
-// // // // import { CreateAudit } from './pages/CreateAudit';
-// // // // import { AuditChecklist } from './pages/AuditChecklist';
-// // // // import { CompleteStep } from './pages/CompleteStep';
-// // // // import { MyTasks } from './pages/MyTasks';
-// // // // import { TaskDetails } from './pages/TaskDetails';
-// // // // import { Dashboard } from './pages/Dashboard';
-// // // // import { WorkflowView } from './pages/WorkflowView';
-// // // // import { EmailReminder } from './pages/EmailReminder';
-// // // // import { AuditsList } from './pages/AuditsList';
-// // // // import { ChecklistLibrary } from './pages/ChecklistLibrary';
-// // // // import { Projects } from './pages/Projects';
-// // // // import { Reports } from './pages/Reports';
-// // // // import { Users } from './pages/Users';
-// // // // import { Settings } from './pages/Settings';
-// // // // export function App() {
-// // // //   return (
-// // // //     <BrowserRouter>
-// // // //       <Layout>
-// // // //         <Routes>
-// // // //           <Route path="/" element={<Navigate to="/dashboard" replace />} />
-// // // //           <Route path="/dashboard" element={<Dashboard />} />
-
-// // // //           <Route path="/audits" element={<AuditsList />} />
-// // // //           <Route path="/audits/create" element={<CreateAudit />} />
-// // // //           <Route
-// // // //             path="/audits/manufacturing-unit-1/checklist"
-// // // //             element={<AuditChecklist />} />
-          
-// // // //           <Route
-// // // //             path="/audits/manufacturing-unit-1/checklist/step-1"
-// // // //             element={<CompleteStep />} />
-          
-
-// // // //           <Route path="/workflows" element={<WorkflowView />} />
-// // // //           <Route path="/checklist-library" element={<ChecklistLibrary />} />
-
-// // // //           <Route path="/tasks" element={<MyTasks />} />
-// // // //           <Route path="/tasks/:taskId" element={<TaskDetails />} />
-
-// // // //           <Route path="/projects" element={<Projects />} />
-// // // //           <Route path="/reports" element={<Reports />} />
-// // // //           <Route path="/users" element={<Users />} />
-// // // //           <Route path="/settings" element={<Settings />} />
-
-// // // //           <Route path="/email-reminder" element={<EmailReminder />} />
-// // // //         </Routes>
-// // // //       </Layout>
-// // // //     </BrowserRouter>);
-
-// // // // }
-// // // ============================================================
-// // //  App.tsx — with AuthProvider + ProtectedRoute
-// // // ============================================================
-
-// // import React from 'react';
-// // import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-// // import { AuthProvider, useAuth } from './pages/AuthContext';
-// // import { Layout } from './components/Layout';
-// // import { LoginPage } from './pages/Loginpage';
-// // import { CreateAudit } from './pages/CreateAudit';
-// // import { AuditChecklist } from './pages/AuditChecklist';
-// // import { CompleteStep } from './pages/CompleteStep';
-// // import { MyTasks } from './pages/MyTasks';
-// // import { TaskDetails } from './pages/TaskDetails';
-// // import { Dashboard } from './pages/Dashboard';
-// // import { WorkflowView } from './pages/WorkflowView';
-// // import { EmailReminder } from './pages/EmailReminder';
-// // import { AuditsList } from './pages/AuditsList';
-// // import { ChecklistLibrary } from './pages/ChecklistLibrary';
-// // import { Projects } from './pages/Projects';
-// // import { Reports } from './pages/Reports';
-// // import { Users } from './pages/Users';
-// // import { Settings } from './pages/Settings';
-// // import AdminLayout from './pages/admin/AdminLayout';
-// // import AdminPlaceholder from './pages/admin/AdminPlaceholder';
-// // import AdminUsers from './pages/admin/AdminUsers';
-// // // ── Guards ────────────────────────────────────────────────────
-
-// // /** Redirects to /login if not logged in */
-// // function ProtectedRoute({ children }: { children: React.ReactNode }) {
-// //   const { user } = useAuth();
-// //   if (!user) return <Navigate to="/login" replace />;
-// //   return <>{children}</>;
-// // }
-
-// // /** Redirects auditors away from admin-only pages */
-// // function AdminRoute({ children }: { children: React.ReactNode }) {
-// //   const { user, isAdmin } = useAuth();
-// //   if (!user) return <Navigate to="/login" replace />;
-// //   if (!isAdmin) return <Navigate to="/dashboard" replace />;
-// //   return <>{children}</>;
-// // }
-
-// // // ── Inner app (needs auth context) ───────────────────────────
-// // function AppRoutes() {
-// //   const { user } = useAuth();
-
-// //   return (
-// //     <Routes>
-// //       {/* Public */}
-// //       <Route
-// //         path="/login"
-// //         element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-// //       />
-
-// //       {/* Protected — all roles */}
-// //       <Route path="/" element={
-// //         <ProtectedRoute>
-// //           <Layout>
-// //             <Routes>
-// //               <Route index element={<Navigate to="/dashboard" replace />} />
-// //             </Routes>
-// //           </Layout>
-// //         </ProtectedRoute>
-// //       } />
-
-// //       <Route path="/dashboard" element={
-// //         <ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/audits" element={
-// //         <ProtectedRoute><Layout><AuditsList /></Layout></ProtectedRoute>
-// //       } />
-
-// //       {/* Admin only — create audit */}
-// //       <Route path="/audits/create" element={
-// //         <AdminRoute><Layout><CreateAudit /></Layout></AdminRoute>
-// //       } />
-
-// //       <Route path="/audits/manufacturing-unit-1/checklist" element={
-// //         <ProtectedRoute><Layout><AuditChecklist /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/audits/manufacturing-unit-1/checklist/step-1" element={
-// //         <ProtectedRoute><Layout><CompleteStep /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/workflows" element={
-// //         <ProtectedRoute><Layout><WorkflowView /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/checklist-library" element={
-// //         <ProtectedRoute><Layout><ChecklistLibrary /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/tasks" element={
-// //         <ProtectedRoute><Layout><MyTasks /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/tasks/:taskId" element={
-// //         <ProtectedRoute><Layout><TaskDetails /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/projects" element={
-// //         <ProtectedRoute><Layout><Projects /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/reports" element={
-// //         <ProtectedRoute><Layout><Reports /></Layout></ProtectedRoute>
-// //       } />
-
-// //       {/* Admin only — users page
-// //       <Route path="/users" element={
-// //         <AdminRoute><Layout><Users /></Layout></AdminRoute>
-// //       } />
-
-// //       <Route path="/settings" element={
-// //         <ProtectedRoute><Layout><Settings /></Layout></ProtectedRoute>
-// //       } /> */}
-
-// //       {/* Admin section — now wrapped in AdminRoute + Layout, same as every
-// //           other route, so it (a) actually renders the Sidebar/TopBar and
-// //           (b) is guarded like the rest of the admin-only pages instead of
-// //           being reachable by anyone, logged in or not. */}
-// //       <Route path="/admin" element={
-// //         <AdminRoute><Layout><AdminLayout /></Layout></AdminRoute>
-// //       }>
-// //         <Route index element={<Navigate to="users" replace />} />
-
-// //         <Route path="users" element={<AdminUsers />} />
-
-// //         <Route
-// //           path="action-types"
-// //           element={<AdminPlaceholder title="Action Types" />}
-// //         />
-
-// //         <Route
-// //           path="workflow-definitions"
-// //           element={<AdminPlaceholder title="Workflow Definitions" />}
-// //         />
-
-// //         <Route
-// //           path="routing-rules"
-// //           element={<AdminPlaceholder title="Routing Rules" />}
-// //         />
-
-// //         <Route
-// //           path="notifications"
-// //           element={<AdminPlaceholder title="Notifications" />}
-// //         />
-
-// //         <Route
-// //           path="integrations"
-// //           element={<AdminPlaceholder title="Integrations" />}
-// //         />
-// //       </Route>
-
-// //       <Route path="/email-reminder" element={
-// //         <ProtectedRoute><Layout><EmailReminder /></Layout></ProtectedRoute>
-// //       } />
-
-
-// //       {/* Fallback */}
-// //       <Route path="*" element={<Navigate to="/dashboard" replace />} />
-// //     </Routes>
-// //   );
-// // }
-
-// // export function App() {
-// //   return (
-// //     <BrowserRouter>
-// //       <AuthProvider>
-// //         <AppRoutes />
-// //       </AuthProvider>
-// //     </BrowserRouter>
-// //   );
-// // }
-// // ============================================================
-// //  App.tsx — with AuthProvider + ProtectedRoute
-// // ============================================================
-
-// import React from 'react';
-// import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-// import { AuthProvider, useAuth } from './pages/AuthContext';
-// import { Layout } from './components/Layout';
-// import { LoginPage } from './pages/Loginpage';
-// import { CreateAudit } from './pages/CreateAudit';
-// import { AuditChecklist } from './pages/AuditChecklist';
-// import { CompleteStep } from './pages/CompleteStep';
-// import { MyTasks } from './pages/MyTasks';
-// import { TaskDetails } from './pages/TaskDetails';
-// import { Dashboard } from './pages/Dashboard';
-// import { WorkflowView } from './pages/WorkflowView';
-// import { EmailReminder } from './pages/EmailReminder';
-// import { AuditsList } from './pages/AuditsList';
-// import { ChecklistLibrary } from './pages/ChecklistLibrary';
-// import { Projects } from './pages/Projects';
-// import { Reports } from './pages/Reports';
-// import AdminLayout from './pages/admin/AdminLayout';
-// import AdminPlaceholder from './pages/admin/AdminPlaceholder';
-// import AdminUsers from './pages/admin/AdminUsers';
-
-// // ── Guards ────────────────────────────────────────────────────
-
-// /** Redirects to /login if not logged in */
-// function ProtectedRoute({ children }: { children: React.ReactNode }) {
-//   const { user } = useAuth();
-//   if (!user) return <Navigate to="/login" replace />;
-//   return <>{children}</>;
-// }
-
-// /** Redirects auditors away from admin-only pages */
-// function AdminRoute({ children }: { children: React.ReactNode }) {
-//   const { user, isAdmin } = useAuth();
-//   if (!user) return <Navigate to="/login" replace />;
-//   if (!isAdmin) return <Navigate to="/dashboard" replace />;
-//   return <>{children}</>;
-// }
-
-// // ── Inner app (needs auth context) ───────────────────────────
-// function AppRoutes() {
-//   const { user } = useAuth();
-
-//   return (
-//     <Routes>
-//       {/* Public */}
-//       <Route
-//         path="/login"
-//         element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-//       />
-
-//       {/* Protected — all roles */}
-//       <Route path="/" element={
-//         <ProtectedRoute>
-//           <Layout>
-//             <Routes>
-//               <Route index element={<Navigate to="/dashboard" replace />} />
-//             </Routes>
-//           </Layout>
-//         </ProtectedRoute>
-//       } />
-
-//       <Route path="/dashboard" element={
-//         <ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/audits" element={
-//         <ProtectedRoute><Layout><AuditsList /></Layout></ProtectedRoute>
-//       } />
-
-//       {/* Admin only — create audit */}
-//       <Route path="/audits/create" element={
-//         <AdminRoute><Layout><CreateAudit /></Layout></AdminRoute>
-//       } />
-
-//       <Route path="/audits/manufacturing-unit-1/checklist" element={
-//         <ProtectedRoute><Layout><AuditChecklist /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/audits/manufacturing-unit-1/checklist/step-1" element={
-//         <ProtectedRoute><Layout><CompleteStep /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/workflows" element={
-//         <ProtectedRoute><Layout><WorkflowView /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/checklist-library" element={
-//         <ProtectedRoute><Layout><ChecklistLibrary /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/tasks" element={
-//         <ProtectedRoute><Layout><MyTasks /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/tasks/:taskId" element={
-//         <ProtectedRoute><Layout><TaskDetails /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/projects" element={
-//         <ProtectedRoute><Layout><Projects /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/reports" element={
-//         <ProtectedRoute><Layout><Reports /></Layout></ProtectedRoute>
-//       } />
-
-//       {/* Admin section — wrapped in AdminRoute + Layout, same as every other
-//           route, so it (a) actually renders the Sidebar/TopBar and (b) is
-//           guarded like the rest of the admin-only pages instead of being
-//           reachable by anyone, logged in or not. */}
-//       <Route path="/admin" element={
-//         <AdminRoute><Layout><AdminLayout /></Layout></AdminRoute>
-//       }>
-//         <Route index element={<Navigate to="users" replace />} />
-
-//         <Route path="users" element={<AdminUsers />} />
-
-//         <Route
-//           path="action-types"
-//           element={<AdminPlaceholder title="Action Types" />}
-//         />
-
-//         <Route
-//           path="workflow-definitions"
-//           element={<AdminPlaceholder title="Workflow Definitions" />}
-//         />
-
-//         <Route
-//           path="routing-rules"
-//           element={<AdminPlaceholder title="Routing Rules" />}
-//         />
-
-//         <Route
-//           path="notifications"
-//           element={<AdminPlaceholder title="Notifications" />}
-//         />
-
-//         <Route
-//           path="integrations"
-//           element={<AdminPlaceholder title="Integrations" />}
-//         />
-//       </Route>
-
-//       <Route path="/email-reminder" element={
-//         <ProtectedRoute><Layout><EmailReminder /></Layout></ProtectedRoute>
-//       } />
-
-//       {/* Fallback */}
-//       <Route path="*" element={<Navigate to="/dashboard" replace />} />
-//     </Routes>
-//   );
-// }
-
-// export function App() {
-//   return (
-//     <BrowserRouter>
-//       <AuthProvider>
-//         <AppRoutes />
-//       </AuthProvider>
-//     </BrowserRouter>
-//   );
-// }
-// // // import { BrowserRouter } from 'react-router-dom';
-// // // import FlowableModuleBuilder from './FlowableModuleBuilder';
-
-// // // export function App() {
-// // //   return (
-// // //     <BrowserRouter>
-// // //       <FlowableModuleBuilder />
-// // //     </BrowserRouter>
-// // //   );
-// // // }
-
-// // // ============================================================
-// // //  App.tsx — with AuthProvider + ProtectedRoute
-// // // ============================================================
-
-// // import React from 'react';
-// // import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-// // import { AuthProvider, useAuth } from './pages/AuthContext';
-// // import { Layout } from './components/Layout';
-// // import { LoginPage } from './pages/Loginpage';
-// // import { CreateAudit } from './pages/CreateAudit';
-// // import { AuditChecklist } from './pages/AuditChecklist';
-// // import { CompleteStep } from './pages/CompleteStep';
-// // import { MyTasks } from './pages/MyTasks';
-// // import { TaskDetails } from './pages/TaskDetails';
-// // import { Dashboard } from './pages/Dashboard';
-// // import { WorkflowView } from './pages/WorkflowView';
-// // import { EmailReminder } from './pages/EmailReminder';
-// // import { AuditsList } from './pages/AuditsList';
-// // import { ChecklistLibrary } from './pages/ChecklistLibrary';
-// // import { Projects } from './pages/Projects';
-// // import { Reports } from './pages/Reports';
-// // import { Users } from './pages/Users';
-// // import { Settings } from './pages/Settings';
-// // import AdminLayout from './pages/admin/AdminLayout';
-// // import AdminPlaceholder from './pages/admin/AdminPlaceholder';
-// // import AdminUsers from './pages/admin/AdminUsers';
-// // // ── Guards ────────────────────────────────────────────────────
-
-// // /** Redirects to /login if not logged in */
-// // function ProtectedRoute({ children }: { children: React.ReactNode }) {
-// //   const { user } = useAuth();
-// //   if (!user) return <Navigate to="/login" replace />;
-// //   return <>{children}</>;
-// // }
-
-// // /** Redirects auditors away from admin-only pages */
-// // function AdminRoute({ children }: { children: React.ReactNode }) {
-// //   const { user, isAdmin } = useAuth();
-// //   if (!user) return <Navigate to="/login" replace />;
-// //   if (!isAdmin) return <Navigate to="/dashboard" replace />;
-// //   return <>{children}</>;
-// // }
-
-// // // ── Inner app (needs auth context) ───────────────────────────
-// // function AppRoutes() {
-// //   const { user } = useAuth();
-
-// //   return (
-// //     <Routes>
-// //       {/* Public */}
-// //       <Route
-// //         path="/login"
-// //         element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-// //       />
-
-// //       {/* Protected — all roles */}
-// //       <Route path="/" element={
-// //         <ProtectedRoute>
-// //           <Layout>
-// //             <Routes>
-// //               <Route index element={<Navigate to="/dashboard" replace />} />
-// //             </Routes>
-// //           </Layout>
-// //         </ProtectedRoute>
-// //       } />
-
-// //       <Route path="/dashboard" element={
-// //         <ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/audits" element={
-// //         <ProtectedRoute><Layout><AuditsList /></Layout></ProtectedRoute>
-// //       } />
-
-// //       {/* Admin only — create audit */}
-// //       <Route path="/audits/create" element={
-// //         <AdminRoute><Layout><CreateAudit /></Layout></AdminRoute>
-// //       } />
-
-// //       <Route path="/audits/manufacturing-unit-1/checklist" element={
-// //         <ProtectedRoute><Layout><AuditChecklist /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/audits/manufacturing-unit-1/checklist/step-1" element={
-// //         <ProtectedRoute><Layout><CompleteStep /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/workflows" element={
-// //         <ProtectedRoute><Layout><WorkflowView /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/checklist-library" element={
-// //         <ProtectedRoute><Layout><ChecklistLibrary /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/tasks" element={
-// //         <ProtectedRoute><Layout><MyTasks /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/tasks/:taskId" element={
-// //         <ProtectedRoute><Layout><TaskDetails /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/projects" element={
-// //         <ProtectedRoute><Layout><Projects /></Layout></ProtectedRoute>
-// //       } />
-
-// //       <Route path="/reports" element={
-// //         <ProtectedRoute><Layout><Reports /></Layout></ProtectedRoute>
-// //       } />
-
-// //       {/* Admin only — users page
-// //       <Route path="/users" element={
-// //         <AdminRoute><Layout><Users /></Layout></AdminRoute>
-// //       } />
-
-// //       <Route path="/settings" element={
-// //         <ProtectedRoute><Layout><Settings /></Layout></ProtectedRoute>
-// //       } /> */}
-// //       <Route path="/admin" element={<AdminLayout />}>
-// //         <Route index element={<Navigate to="users" replace />} />
-
-// //         <Route path="users" element={<AdminUsers />} />
-
-// //         <Route
-// //           path="action-types"
-// //           element={<AdminPlaceholder title="Action Types" />}
-// //         />
-
-// //         <Route
-// //           path="workflow-definitions"
-// //           element={<AdminPlaceholder title="Workflow Definitions" />}
-// //         />
-
-// //         <Route
-// //           path="routing-rules"
-// //           element={<AdminPlaceholder title="Routing Rules" />}
-// //         />
-
-// //         <Route
-// //           path="notifications"
-// //           element={<AdminPlaceholder title="Notifications" />}
-// //         />
-
-// //         <Route
-// //           path="integrations"
-// //           element={<AdminPlaceholder title="Integrations" />}
-// //         />
-// //       </Route>
-
-// //       <Route path="/email-reminder" element={
-// //         <ProtectedRoute><Layout><EmailReminder /></Layout></ProtectedRoute>
-// //       } />
-
-
-// //       {/* Fallback */}
-// //       <Route path="*" element={<Navigate to="/dashboard" replace />} />
-// //     </Routes>
-// //   );
-// // }
-
-// // export function App() {
-// //   return (
-// //     <BrowserRouter>
-// //       <AuthProvider>
-// //         <AppRoutes />
-// //       </AuthProvider>
-// //     </BrowserRouter>
-// //   );
-// // }
-// // // import React from 'react';
-// // // import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-// // // import { Layout } from './components/Layout';
-// // // import { CreateAudit } from './pages/CreateAudit';
-// // // import { AuditChecklist } from './pages/AuditChecklist';
-// // // import { CompleteStep } from './pages/CompleteStep';
-// // // import { MyTasks } from './pages/MyTasks';
-// // // import { TaskDetails } from './pages/TaskDetails';
-// // // import { Dashboard } from './pages/Dashboard';
-// // // import { WorkflowView } from './pages/WorkflowView';
-// // // import { EmailReminder } from './pages/EmailReminder';
-// // // import { AuditsList } from './pages/AuditsList';
-// // // import { ChecklistLibrary } from './pages/ChecklistLibrary';
-// // // import { Projects } from './pages/Projects';
-// // // import { Reports } from './pages/Reports';
-// // // import { Users } from './pages/Users';
-// // // import { Settings } from './pages/Settings';
-// // // export function App() {
-// // //   return (
-// // //     <BrowserRouter>
-// // //       <Layout>
-// // //         <Routes>
-// // //           <Route path="/" element={<Navigate to="/dashboard" replace />} />
-// // //           <Route path="/dashboard" element={<Dashboard />} />
-
-// // //           <Route path="/audits" element={<AuditsList />} />
-// // //           <Route path="/audits/create" element={<CreateAudit />} />
-// // //           <Route
-// // //             path="/audits/manufacturing-unit-1/checklist"
-// // //             element={<AuditChecklist />} />
-          
-// // //           <Route
-// // //             path="/audits/manufacturing-unit-1/checklist/step-1"
-// // //             element={<CompleteStep />} />
-          
-
-// // //           <Route path="/workflows" element={<WorkflowView />} />
-// // //           <Route path="/checklist-library" element={<ChecklistLibrary />} />
-
-// // //           <Route path="/tasks" element={<MyTasks />} />
-// // //           <Route path="/tasks/:taskId" element={<TaskDetails />} />
-
-// // //           <Route path="/projects" element={<Projects />} />
-// // //           <Route path="/reports" element={<Reports />} />
-// // //           <Route path="/users" element={<Users />} />
-// // //           <Route path="/settings" element={<Settings />} />
-
-// // //           <Route path="/email-reminder" element={<EmailReminder />} />
-// // //         </Routes>
-// // //       </Layout>
-// // //     </BrowserRouter>);
-
-// // // }
-// // ============================================================
-// //  App.tsx — with AuthProvider + ProtectedRoute
-// // ============================================================
-
-// import React from 'react';
-// import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-// import { AuthProvider, useAuth } from './pages/AuthContext';
-// import { Layout } from './components/Layout';
-// import { LoginPage } from './pages/Loginpage';
-// import { CreateAudit } from './pages/CreateAudit';
-// import { AuditChecklist } from './pages/AuditChecklist';
-// import { CompleteStep } from './pages/CompleteStep';
-// import { MyTasks } from './pages/MyTasks';
-// import { TaskDetails } from './pages/TaskDetails';
-// import { Dashboard } from './pages/Dashboard';
-// import { WorkflowView } from './pages/WorkflowView';
-// import { EmailReminder } from './pages/EmailReminder';
-// import { AuditsList } from './pages/AuditsList';
-// import { ChecklistLibrary } from './pages/ChecklistLibrary';
-// import { Projects } from './pages/Projects';
-// import { Reports } from './pages/Reports';
-// import { Users } from './pages/Users';
-// import { Settings } from './pages/Settings';
-// import AdminLayout from './pages/admin/AdminLayout';
-// import AdminPlaceholder from './pages/admin/AdminPlaceholder';
-// import AdminUsers from './pages/admin/AdminUsers';
-// // ── Guards ────────────────────────────────────────────────────
-
-// /** Redirects to /login if not logged in */
-// function ProtectedRoute({ children }: { children: React.ReactNode }) {
-//   const { user } = useAuth();
-//   if (!user) return <Navigate to="/login" replace />;
-//   return <>{children}</>;
-// }
-
-// /** Redirects auditors away from admin-only pages */
-// function AdminRoute({ children }: { children: React.ReactNode }) {
-//   const { user, isAdmin } = useAuth();
-//   if (!user) return <Navigate to="/login" replace />;
-//   if (!isAdmin) return <Navigate to="/dashboard" replace />;
-//   return <>{children}</>;
-// }
-
-// // ── Inner app (needs auth context) ───────────────────────────
-// function AppRoutes() {
-//   const { user } = useAuth();
-
-//   return (
-//     <Routes>
-//       {/* Public */}
-//       <Route
-//         path="/login"
-//         element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
-//       />
-
-//       {/* Protected — all roles */}
-//       <Route path="/" element={
-//         <ProtectedRoute>
-//           <Layout>
-//             <Routes>
-//               <Route index element={<Navigate to="/dashboard" replace />} />
-//             </Routes>
-//           </Layout>
-//         </ProtectedRoute>
-//       } />
-
-//       <Route path="/dashboard" element={
-//         <ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/audits" element={
-//         <ProtectedRoute><Layout><AuditsList /></Layout></ProtectedRoute>
-//       } />
-
-//       {/* Admin only — create audit */}
-//       <Route path="/audits/create" element={
-//         <AdminRoute><Layout><CreateAudit /></Layout></AdminRoute>
-//       } />
-
-//       <Route path="/audits/manufacturing-unit-1/checklist" element={
-//         <ProtectedRoute><Layout><AuditChecklist /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/audits/manufacturing-unit-1/checklist/step-1" element={
-//         <ProtectedRoute><Layout><CompleteStep /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/workflows" element={
-//         <ProtectedRoute><Layout><WorkflowView /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/checklist-library" element={
-//         <ProtectedRoute><Layout><ChecklistLibrary /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/tasks" element={
-//         <ProtectedRoute><Layout><MyTasks /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/tasks/:taskId" element={
-//         <ProtectedRoute><Layout><TaskDetails /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/projects" element={
-//         <ProtectedRoute><Layout><Projects /></Layout></ProtectedRoute>
-//       } />
-
-//       <Route path="/reports" element={
-//         <ProtectedRoute><Layout><Reports /></Layout></ProtectedRoute>
-//       } />
-
-//       {/* Admin only — users page
-//       <Route path="/users" element={
-//         <AdminRoute><Layout><Users /></Layout></AdminRoute>
-//       } />
-
-//       <Route path="/settings" element={
-//         <ProtectedRoute><Layout><Settings /></Layout></ProtectedRoute>
-//       } /> */}
-
-//       {/* Admin section — now wrapped in AdminRoute + Layout, same as every
-//           other route, so it (a) actually renders the Sidebar/TopBar and
-//           (b) is guarded like the rest of the admin-only pages instead of
-//           being reachable by anyone, logged in or not. */}
-//       <Route path="/admin" element={
-//         <AdminRoute><Layout><AdminLayout /></Layout></AdminRoute>
-//       }>
-//         <Route index element={<Navigate to="users" replace />} />
-
-//         <Route path="users" element={<AdminUsers />} />
-
-//         <Route
-//           path="action-types"
-//           element={<AdminPlaceholder title="Action Types" />}
-//         />
-
-//         <Route
-//           path="workflow-definitions"
-//           element={<AdminPlaceholder title="Workflow Definitions" />}
-//         />
-
-//         <Route
-//           path="routing-rules"
-//           element={<AdminPlaceholder title="Routing Rules" />}
-//         />
-
-//         <Route
-//           path="notifications"
-//           element={<AdminPlaceholder title="Notifications" />}
-//         />
-
-//         <Route
-//           path="integrations"
-//           element={<AdminPlaceholder title="Integrations" />}
-//         />
-//       </Route>
-
-//       <Route path="/email-reminder" element={
-//         <ProtectedRoute><Layout><EmailReminder /></Layout></ProtectedRoute>
-//       } />
-
-
-//       {/* Fallback */}
-//       <Route path="*" element={<Navigate to="/dashboard" replace />} />
-//     </Routes>
-//   );
-// }
-
-// export function App() {
-//   return (
-//     <BrowserRouter>
-//       <AuthProvider>
-//         <AppRoutes />
-//       </AuthProvider>
-//     </BrowserRouter>
-//   );
-// }
 // ============================================================
 //  App.tsx — with AuthProvider + ProtectedRoute
 // ============================================================
 
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { AuthProvider, useAuth } from './pages/AuthContext';
+import { AuthProvider, useAuth, getDashboardPath } from './pages/AuthContext';
 import { Layout } from './components/Layout';
-import { LoginPage } from './pages/Login';
+import { LoginPage } from './pages/Loginpage';
 import { CreateAudit } from './pages/CreateAudit';
 import { AuditChecklist } from './pages/AuditChecklist';
 import { CompleteStep } from './pages/CompleteStep';
@@ -1007,77 +19,94 @@ import { AuditsList } from './pages/AuditsList';
 import { ChecklistLibrary } from './pages/ChecklistLibrary';
 import { Projects } from './pages/Projects';
 import { Reports } from './pages/Reports';
+import { ObservationTask } from './pages/ObservationTask';
+import { CommercialHeadDashboard, FunctionalHeadDashboard } from './pages/HeadDashboards';
+import { RoleRoute, HomeRedirect } from './components/RoleRoute';
 import AdminLayout from './pages/admin/AdminLayout';
 import AdminPlaceholder from './pages/admin/AdminPlaceholder';
 import AdminUsers from './pages/admin/AdminUsers';
-
-// ── Guards ────────────────────────────────────────────────────
-
-/** Redirects to /login if not logged in */
+import { CreateAtrObservation } from "./pages/Createobservation";
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
-/** Redirects auditors away from admin-only pages */
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { user, isAdmin } = useAuth();
   if (!user) return <Navigate to="/login" replace />;
-  if (!isAdmin) return <Navigate to="/dashboard" replace />;
+  if (!isAdmin) return <Navigate to={getDashboardPath(user.role)} replace />;
   return <>{children}</>;
 }
 
-// ── Inner app (needs auth context) ───────────────────────────
 function AppRoutes() {
   const { user } = useAuth();
 
   return (
     <Routes>
-      {/* Public */}
       <Route
         path="/login"
-        element={user ? <Navigate to="/dashboard" replace /> : <LoginPage />}
+        element={user ? <Navigate to={getDashboardPath(user.role)} replace /> : <LoginPage />}
       />
 
-      {/* Protected — all roles */}
       <Route path="/" element={
-        <ProtectedRoute>
-          <Layout>
-            <Routes>
-              <Route index element={<Navigate to="/dashboard" replace />} />
-            </Routes>
-          </Layout>
-        </ProtectedRoute>
+        <ProtectedRoute><Layout><HomeRedirect /></Layout></ProtectedRoute>
       } />
 
       <Route path="/dashboard" element={
-        <ProtectedRoute><Layout><Dashboard /></Layout></ProtectedRoute>
+        <RoleRoute allowed={['admin', 'auditor','auditee', 'commercialHead', 'functionalHead']}>
+          <Layout><Dashboard /></Layout>
+        </RoleRoute>
       } />
 
+      <Route path="/commercial/dashboard" element={
+        <RoleRoute allowed={['commercialHead']}>
+          <Layout><CommercialHeadDashboard /></Layout>
+        </RoleRoute>
+      } />
+
+      <Route path="/functional/dashboard" element={
+        <RoleRoute allowed={['functionalHead']}>
+          <Layout><FunctionalHeadDashboard /></Layout>
+        </RoleRoute>
+      } />
+
+      {/* Audit list/checklist: admin, auditor, and both head roles can VIEW audits,
+          but only admin/auditor can create or record steps against them. */}
       <Route path="/audits" element={
-        <ProtectedRoute><Layout><AuditsList /></Layout></ProtectedRoute>
+        <RoleRoute allowed={['admin', 'auditor', 'commercialHead', 'functionalHead']}>
+          <Layout><AuditsList /></Layout>
+        </RoleRoute>
       } />
 
-      {/* Admin only — create audit */}
       <Route path="/audits/create" element={
-        <AdminRoute><Layout><CreateAudit /></Layout></AdminRoute>
+        <RoleRoute allowed={['admin', 'auditor']}>
+          <Layout><CreateAudit /></Layout>
+        </RoleRoute>
       } />
 
       <Route path="/audits/manufacturing-unit-1/checklist" element={
-        <ProtectedRoute><Layout><AuditChecklist /></Layout></ProtectedRoute>
+        <RoleRoute allowed={['admin', 'auditor', 'commercialHead', 'functionalHead']}>
+          <Layout><AuditChecklist /></Layout>
+        </RoleRoute>
       } />
 
+      {/* Recording/completing a step is an auditor action only */}
       <Route path="/audits/manufacturing-unit-1/checklist/step-1" element={
-        <ProtectedRoute><Layout><CompleteStep /></Layout></ProtectedRoute>
+        <RoleRoute allowed={['admin', 'auditor']}>
+          <Layout><CompleteStep /></Layout>
+        </RoleRoute>
       } />
 
+      {/* Workflow view is informational — every role (incl. auditee & heads) can see it */}
       <Route path="/workflows" element={
         <ProtectedRoute><Layout><WorkflowView /></Layout></ProtectedRoute>
       } />
 
       <Route path="/checklist-library" element={
-        <ProtectedRoute><Layout><ChecklistLibrary /></Layout></ProtectedRoute>
+        <RoleRoute allowed={['admin', 'auditor', 'commercialHead', 'functionalHead']}>
+          <Layout><ChecklistLibrary /></Layout>
+        </RoleRoute>
       } />
 
       <Route path="/tasks" element={
@@ -1088,6 +117,20 @@ function AppRoutes() {
         <ProtectedRoute><Layout><TaskDetails /></Layout></ProtectedRoute>
       } />
 
+      {/* Recording a new observation is an admin/auditor action only — auditees
+          and heads only ever RESPOND to observations assigned to them via
+          /observations/tasks/:taskId (their My Inbox), never create one. */}
+      <Route path="/observations/new" element={
+        <RoleRoute allowed={['admin', 'auditor']}>
+          <Layout><CreateAtrObservation /></Layout>
+        </RoleRoute>
+      } />
+
+      <Route path="/observations/tasks/:taskId" element={
+        <ProtectedRoute><Layout><ObservationTask /></Layout></ProtectedRoute>
+      } />
+
+      {/* Projects & Reports are visible to every authenticated role */}
       <Route path="/projects" element={
         <ProtectedRoute><Layout><Projects /></Layout></ProtectedRoute>
       } />
@@ -1096,49 +139,25 @@ function AppRoutes() {
         <ProtectedRoute><Layout><Reports /></Layout></ProtectedRoute>
       } />
 
-      {/* Admin section — wrapped in AdminRoute + Layout, same as every other
-          route, so it (a) actually renders the Sidebar/TopBar and (b) is
-          guarded like the rest of the admin-only pages instead of being
-          reachable by anyone, logged in or not. */}
       <Route path="/admin" element={
         <AdminRoute><Layout><AdminLayout /></Layout></AdminRoute>
       }>
         <Route index element={<Navigate to="users" replace />} />
-
         <Route path="users" element={<AdminUsers />} />
-
-        <Route
-          path="action-types"
-          element={<AdminPlaceholder title="Action Types" />}
-        />
-
-        <Route
-          path="workflow-definitions"
-          element={<AdminPlaceholder title="Workflow Definitions" />}
-        />
-
-        <Route
-          path="routing-rules"
-          element={<AdminPlaceholder title="Routing Rules" />}
-        />
-
-        <Route
-          path="notifications"
-          element={<AdminPlaceholder title="Notifications" />}
-        />
-
-        <Route
-          path="integrations"
-          element={<AdminPlaceholder title="Integrations" />}
-        />
+        <Route path="action-types" element={<AdminPlaceholder title="Action Types" />} />
+        <Route path="workflow-definitions" element={<AdminPlaceholder title="Workflow Definitions" />} />
+        <Route path="routing-rules" element={<AdminPlaceholder title="Routing Rules" />} />
+        <Route path="notifications" element={<AdminPlaceholder title="Notifications" />} />
+        <Route path="integrations" element={<AdminPlaceholder title="Integrations" />} />
       </Route>
 
       <Route path="/email-reminder" element={
-        <ProtectedRoute><Layout><EmailReminder /></Layout></ProtectedRoute>
+        <RoleRoute allowed={['admin', 'auditor']}>
+          <Layout><EmailReminder /></Layout>
+        </RoleRoute>
       } />
 
-      {/* Fallback */}
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      <Route path="*" element={<HomeRedirect />} />
     </Routes>
   );
 }

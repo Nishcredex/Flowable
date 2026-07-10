@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:flowable="http://flowable.org/bpmn"
+  targetNamespace="http://jkcopier.com/audit">
+
+  <process id="auditObservationWorkflow" name="Audit Observation Workflow" isExecutable="true">
+
+    <startEvent id="startEvent" name="Start"/>
+
+    <sequenceFlow sourceRef="startEvent" targetRef="submitCorrectiveAction"/>
+
+    <userTask id="submitCorrectiveAction" name="Submit Corrective Action"
+              flowable:assignee="${auditeeId}"
+              flowable:formKey="submitCorrectiveAction"/>
+
+    <sequenceFlow sourceRef="submitCorrectiveAction" targetRef="gw_auditeeAction"/>
+
+    <exclusiveGateway id="gw_auditeeAction" name="Submit or Extension?" default="flow_extension"/>
+
+    <sequenceFlow id="flow_submit" sourceRef="gw_auditeeAction" targetRef="reviewCorrectiveAction">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${actionType == 'submit' || decision == 'SUBMIT'}]]></conditionExpression>
+    </sequenceFlow>
+
+    <sequenceFlow id="flow_extension" sourceRef="gw_auditeeAction" targetRef="approveExtensionCommercial"/>
+
+    <userTask id="reviewCorrectiveAction" name="Auditor Review"
+              flowable:assignee="${auditorId}"
+              flowable:formKey="reviewCorrectiveAction"/>
+
+    <sequenceFlow sourceRef="reviewCorrectiveAction" targetRef="gw_auditorDecision"/>
+
+    <exclusiveGateway id="gw_auditorDecision" name="Approve?" default="flow_auditor_reject"/>
+
+    <sequenceFlow id="flow_auditor_approve" sourceRef="gw_auditorDecision" targetRef="endCompleted">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${decision == 'APPROVE' || reviewDecision == 'Adequate'}]]></conditionExpression>
+    </sequenceFlow>
+
+    <sequenceFlow id="flow_auditor_reject" sourceRef="gw_auditorDecision" targetRef="submitCorrectiveAction"/>
+
+    <userTask id="approveExtensionCommercial" name="Commercial Head Approval"
+              flowable:candidateGroups="commercialHead"
+              flowable:formKey="approveExtensionCommercial"/>
+
+    <sequenceFlow sourceRef="approveExtensionCommercial" targetRef="gw_commercialDecision"/>
+
+    <exclusiveGateway id="gw_commercialDecision" name="Commercial Approve?" default="flow_commercial_reject"/>
+
+    <sequenceFlow id="flow_commercial_approve" sourceRef="gw_commercialDecision" targetRef="approveExtensionFunctional">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${decision == 'APPROVE' || commercialDecision == 'Approved'}]]></conditionExpression>
+    </sequenceFlow>
+
+    <sequenceFlow id="flow_commercial_reject" sourceRef="gw_commercialDecision" targetRef="submitCorrectiveAction"/>
+
+    <userTask id="approveExtensionFunctional" name="Functional Head Approval"
+              flowable:candidateGroups="functionalHead"
+              flowable:formKey="approveExtensionFunctional"/>
+
+    <sequenceFlow sourceRef="approveExtensionFunctional" targetRef="gw_functionalDecision"/>
+
+    <exclusiveGateway id="gw_functionalDecision" name="Functional Approve?" default="flow_functional_reject"/>
+
+    <sequenceFlow id="flow_functional_approve" sourceRef="gw_functionalDecision" targetRef="submitCorrectiveAction">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${decision == 'APPROVE' || functionalDecision == 'Approved'}]]></conditionExpression>
+    </sequenceFlow>
+
+    <sequenceFlow id="flow_functional_reject" sourceRef="gw_functionalDecision" targetRef="submitCorrectiveAction"/>
+
+    <endEvent id="endCompleted" name="Completed"/>
+
+  </process>
+</definitions>

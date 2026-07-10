@@ -144,7 +144,7 @@ async function buildAuditRow(instance: ProcessInstance): Promise<AuditRow> {
 
 export function AuditsList() {
   const navigate = useNavigate();
-  const { isAdmin, user } = useAuth();
+  const { isAdmin, isAuditor, user } = useAuth();
   const [auditRows,    setAuditRows]    = useState<AuditRow[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [error,        setError]        = useState('');
@@ -208,7 +208,10 @@ export function AuditsList() {
     return false;
   };
 
-  const visibleRows = isAdmin ? auditRows : auditRows.filter(r => isMyAudit(r.auditor));
+  // Auditors and admins see every audit; any other role only sees audits
+  // where they are the assigned auditor (kept as a defensive fallback —
+  // in practice non-auditor/admin roles are routed away from this page).
+  const visibleRows = isAuditor ? auditRows : auditRows.filter(r => isMyAudit(r.auditor));
 
   const filtered = visibleRows.filter((row) =>
     row.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -242,7 +245,7 @@ export function AuditsList() {
             <RefreshCwIcon className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
-          {isAdmin && (
+          {isAuditor && (
   <Link
     to="/audits/create"
     className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
@@ -297,12 +300,12 @@ export function AuditsList() {
             <p className="text-sm font-medium text-gray-700">
               {searchQuery ? 'No audits match your search' : 'No audits found'}
             </p>
-            {!searchQuery && isAdmin && (
+            {!searchQuery && isAuditor && (
               <Link to="/audits/create" className="mt-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors">
                 Create Audit
               </Link>
             )}
-            {!searchQuery && !isAdmin && (
+            {!searchQuery && !isAuditor && (
               <p className="text-xs text-gray-400">Audits assigned to you by an admin will appear here.</p>
             )}
           </div>

@@ -1,6 +1,356 @@
+// // const express = require("express");
+// // const cors    = require("cors");
+// // const axios   = require("axios");
+// // const path    = require("path");
+
+// // const { initDb } = require("./db/pool");
+// // const { FLOWABLE_AUTH, FLOWABLE_USER, FLOWABLE_PASS } = require("./flowableClient");
+// // const auditsRouter = require("./routes/audits");
+// // const tasksRouter = require("./routes/tasks");
+// // const attachmentsRouter = require("./routes/attachments");
+
+// // const app = express();
+
+// // app.use(cors({
+// //   origin: '*',
+// //   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+// //   allowedHeaders: ['Content-Type', 'Authorization']
+// // }));
+// // app.use(express.json());
+// // app.use(express.static("public"));
+// // app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// // const FLOWABLE_BASE = process.env.FLOWABLE_BASE || "http://localhost:8080/flowable-ui/process-api";
+
+// // // ── Domain APIs ──────────────────────────────────────────────
+// // app.use("/api/audits", auditsRouter);
+// // app.use("/api/tasks", tasksRouter);
+// // app.use("/api/attachments", attachmentsRouter);
+
+// // // Route 1 — resourcedata (binary PNG from deployment)
+// // app.get(
+// //   '/flowable-api/repository/deployments/:deploymentId/resourcedata/:filename',
+// //   async (req, res) => {
+// //     const { deploymentId, filename } = req.params;
+// //     const targetUrl = `${FLOWABLE_BASE}/repository/deployments/${deploymentId}/resourcedata/${filename}`;
+
+// //     try {
+// //       const upstream = await fetch(targetUrl, {
+// //         headers: { Authorization: FLOWABLE_AUTH },
+// //       });
+
+// //       if (!upstream.ok) {
+// //         return res.status(upstream.status).end();
+// //       }
+
+// //       const contentType = upstream.headers.get('Content-Type') || 'image/png';
+// //       res.set('Content-Type', contentType);
+// //       res.set('Cache-Control', 'no-store');
+
+// //       const buffer = await upstream.arrayBuffer();
+// //       return res.send(Buffer.from(buffer));
+// //     } catch (err) {
+// //       return res.status(500).json({ error: err.message });
+// //     }
+// //   }
+// // );
+
+// // // Route 2 — legacy /image endpoint
+// // app.get(
+// //   '/flowable-api/repository/process-definitions/:id/image',
+// //   async (req, res) => {
+// //     const targetUrl = `${FLOWABLE_BASE}/repository/process-definitions/${req.params.id}/image`;
+
+// //     try {
+// //       const upstream = await fetch(targetUrl, {
+// //         headers: { Authorization: FLOWABLE_AUTH },
+// //       });
+
+// //       if (!upstream.ok) {
+// //         return res.status(upstream.status).end();
+// //       }
+
+// //       const contentType = upstream.headers.get('Content-Type') || 'image/png';
+// //       res.set('Content-Type', contentType);
+// //       res.set('Cache-Control', 'no-store');
+
+// //       const buffer = await upstream.arrayBuffer();
+// //       return res.send(Buffer.from(buffer));
+// //     } catch (err) {
+// //       return res.status(500).json({ error: err.message });
+// //     }
+// //   }
+// // );
+
+// // // GENERIC JSON PROXY
+// // app.use('/flowable-api', async (req, res) => {
+// //   const targetUrl = `${FLOWABLE_BASE}${req.path}`;
+// //   const queryString = Object.keys(req.query).length
+// //     ? '?' + new URLSearchParams(req.query).toString()
+// //     : '';
+
+// //   try {
+// //     const response = await axios({
+// //       method:  req.method,
+// //       url:     targetUrl + queryString,
+// //       headers: {
+// //         'Content-Type':  'application/json',
+// //         'Authorization': FLOWABLE_AUTH,
+// //       },
+// //       data:    ['POST', 'PUT'].includes(req.method) ? req.body : undefined,
+// //       timeout: 30000,
+// //     });
+
+// //     return res.status(response.status).json(response.data);
+// //   } catch (err) {
+// //     const status  = err.response?.status || 500;
+// //     const message = err.response?.data   || err.message;
+// //     return res.status(status).json({ error: message });
+// //   }
+// // });
+
+// // app.post("/start-process", async (req, res) => {
+// //   const { fullName, emailAddress } = req.body;
+// //   if (!fullName || !emailAddress) {
+// //     return res.status(400).json({ success: false, error: "Missing fullName or emailAddress" });
+// //   }
+// //   try {
+// //     const response = await axios.post(
+// //       `${FLOWABLE_BASE}/runtime/process-instances`,
+// //       {
+// //         processDefinitionKey: "registrationWorkflow",
+// //         variables: [
+// //           { name: "fullName",     value: fullName,     type: "string" },
+// //           { name: "emailAddress", value: emailAddress, type: "string" }
+// //         ]
+// //       },
+// //       { headers: { "Content-Type": "application/json", "Authorization": FLOWABLE_AUTH }, timeout: 30000 }
+// //     );
+// //     return res.json({ success: true, data: response.data });
+// //   } catch (err) {
+// //     return res.status(500).json({ success: false, error: err.response?.data || err.message });
+// //   }
+// // });
+
+// // app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// // const PORT = process.env.PORT || 3000;
+
+// // initDb()
+// //   .catch((err) => console.warn('[PG] init skipped:', err.message))
+// //   .finally(() => {
+// //     app.listen(PORT, () => {
+// //       console.log(`\n🚀 Node server  → http://localhost:${PORT}`);
+// //       console.log(`   Flowable      → ${FLOWABLE_BASE}`);
+// //       console.log(`   Flowable auth → ${FLOWABLE_USER}:${FLOWABLE_PASS}`);
+// //       console.log(`   Proxy         → /flowable-api → Flowable`);
+// //       console.log(`   Domain APIs   → /api/audits, /api/tasks, /api/attachments\n`);
+// //     });
+// //   });
+
+
+// const express = require("express");
+// const cors    = require("cors");
+// const axios   = require("axios");
+// const path    = require("path");
+
+// const { initDb } = require("./db/pool");
+// const { FLOWABLE_AUTH, FLOWABLE_USER, FLOWABLE_PASS } = require("./flowableClient");
+// const auditsRouter = require("./routes/audits");
+// const tasksRouter = require("./routes/tasks");
+// const attachmentsRouter = require("./routes/attachments");
+
+// const app = express();
+
+// app.use(cors({
+//   origin: '*',
+//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+//   allowedHeaders: ['Content-Type', 'Authorization']
+// }));
+// app.use(express.json());
+// app.use(express.static("public"));
+// app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+// const FLOWABLE_BASE = process.env.FLOWABLE_BASE || "http://localhost:8080/flowable-ui/process-api";
+
+// // ATR_EXTENSION_APPROVAL runs on Flowable's CMMN engine, which is a
+// // separate REST app from the process (BPMN) engine above. Defaults to
+// // swapping "process-api" for "cmmn-api" on the same host, matching a
+// // standard flowable-ui deployment. Override with FLOWABLE_CMMN_BASE if
+// // your deployment differs.
+// const FLOWABLE_CMMN_BASE =
+//   process.env.FLOWABLE_CMMN_BASE || FLOWABLE_BASE.replace("/process-api", "/cmmn-api");
+
+// // ── Domain APIs ──────────────────────────────────────────────
+// app.use("/api/audits", auditsRouter);
+// app.use("/api/tasks", tasksRouter);
+// app.use("/api/attachments", attachmentsRouter);
+
+
+
+// // Route 1 — resourcedata (binary PNG from deployment)
+// app.get(
+//   '/flowable-api/repository/deployments/:deploymentId/resourcedata/:filename',
+//   async (req, res) => {
+//     const { deploymentId, filename } = req.params;
+//     const targetUrl = `${FLOWABLE_BASE}/repository/deployments/${deploymentId}/resourcedata/${filename}`;
+
+//     try {
+//       const upstream = await fetch(targetUrl, {
+//         headers: { Authorization: FLOWABLE_AUTH },
+//       });
+
+//       if (!upstream.ok) {
+//         return res.status(upstream.status).end();
+//       }
+
+//       const contentType = upstream.headers.get('Content-Type') || 'image/png';
+//       res.set('Content-Type', contentType);
+//       res.set('Cache-Control', 'no-store');
+
+//       const buffer = await upstream.arrayBuffer();
+//       return res.send(Buffer.from(buffer));
+//     } catch (err) {
+//       return res.status(500).json({ error: err.message });
+//     }
+//   }
+// );
+
+// // Route 2 — legacy /image endpoint
+// app.get(
+//   '/flowable-api/repository/process-definitions/:id/image',
+//   async (req, res) => {
+//     const targetUrl = `${FLOWABLE_BASE}/repository/process-definitions/${req.params.id}/image`;
+
+//     try {
+//       const upstream = await fetch(targetUrl, {
+//         headers: { Authorization: FLOWABLE_AUTH },
+//       });
+
+//       if (!upstream.ok) {
+//         return res.status(upstream.status).end();
+//       }
+
+//       const contentType = upstream.headers.get('Content-Type') || 'image/png';
+//       res.set('Content-Type', contentType);
+//       res.set('Cache-Control', 'no-store');
+
+//       const buffer = await upstream.arrayBuffer();
+//       return res.send(Buffer.from(buffer));
+//     } catch (err) {
+//       return res.status(500).json({ error: err.message });
+//     }
+//   }
+// );
+
+// // GENERIC JSON PROXY
+// app.use('/flowable-api', async (req, res) => {
+//   const targetUrl = `${FLOWABLE_BASE}${req.path}`;
+//   const queryString = Object.keys(req.query).length
+//     ? '?' + new URLSearchParams(req.query).toString()
+//     : '';
+
+//   try {
+//     const response = await axios({
+//       method:  req.method,
+//       url:     targetUrl + queryString,
+//       headers: {
+//         'Content-Type':  'application/json',
+//         'Authorization': FLOWABLE_AUTH,
+//       },
+//       data:    ['POST', 'PUT'].includes(req.method) ? req.body : undefined,
+//       timeout: 30000,
+//     });
+
+//     return res.status(response.status).json(response.data);
+//   } catch (err) {
+//     const status  = err.response?.status || 500;
+//     const message = err.response?.data   || err.message;
+//     return res.status(status).json({ error: message });
+//   }
+// });
+
+// // GENERIC JSON PROXY — CMMN engine (ATR_EXTENSION_APPROVAL case tasks:
+// // commercialHeadApprovalTask / functionalHeadApprovalTask). Mirrors the
+// // /flowable-api proxy above, just pointed at the CMMN REST app.
+// app.use('/cmmn-flowable-api', async (req, res) => {
+//   const targetUrl = `${FLOWABLE_CMMN_BASE}${req.path}`;
+//   const queryString = Object.keys(req.query).length
+//     ? '?' + new URLSearchParams(req.query).toString()
+//     : '';
+
+//   try {
+//     const response = await axios({
+//       method:  req.method,
+//       url:     targetUrl + queryString,
+//       headers: {
+//         'Content-Type':  'application/json',
+//         'Authorization': FLOWABLE_AUTH,
+//       },
+//       data:    ['POST', 'PUT'].includes(req.method) ? req.body : undefined,
+//       timeout: 30000,
+//     });
+
+//     return res.status(response.status).json(response.data);
+//   } catch (err) {
+//     const status  = err.response?.status || 500;
+//     const message = err.response?.data   || err.message;
+//     return res.status(status).json({ error: message });
+//   }
+// });
+
+// app.post("/start-process", async (req, res) => {
+//   const { fullName, emailAddress } = req.body;
+//   if (!fullName || !emailAddress) {
+//     return res.status(400).json({ success: false, error: "Missing fullName or emailAddress" });
+//   }
+//   try {
+//     const response = await axios.post(
+//       `${FLOWABLE_BASE}/runtime/process-instances`,
+//       {
+//         processDefinitionKey: "registrationWorkflow",
+//         variables: [
+//           { name: "fullName",     value: fullName,     type: "string" },
+//           { name: "emailAddress", value: emailAddress, type: "string" }
+//         ]
+//       },
+//       { headers: { "Content-Type": "application/json", "Authorization": FLOWABLE_AUTH }, timeout: 30000 }
+//     );
+//     return res.json({ success: true, data: response.data });
+//   } catch (err) {
+//     return res.status(500).json({ success: false, error: err.response?.data || err.message });
+//   }
+// });
+
+// app.get("/health", (_req, res) => res.json({ ok: true }));
+
+// const PORT = process.env.PORT || 3000;
+
+// initDb()
+//   .catch((err) => console.warn('[PG] init skipped:', err.message))
+//   .finally(() => {
+//     app.listen(PORT, () => {
+//       console.log(`\n🚀 Node server  → http://localhost:${PORT}`);
+//       console.log(`   Flowable      → ${FLOWABLE_BASE}`);
+//       console.log(`   Flowable auth → ${FLOWABLE_USER}:${FLOWABLE_PASS}`);
+//       console.log(`   Proxy         → /flowable-api → Flowable (BPMN)`);
+//       console.log(`   Proxy         → /cmmn-flowable-api → Flowable (CMMN) → ${FLOWABLE_CMMN_BASE}`);
+//       console.log(`   Domain APIs   → /api/audits, /api/tasks, /api/attachments\n`);
+//     });
+//   });
+
 const express = require("express");
 const cors    = require("cors");
 const axios   = require("axios");
+const path    = require("path");
+const multer  = require("multer");
+const FormData = require("form-data");
+
+const { initDb } = require("./db/pool");
+const { FLOWABLE_AUTH, FLOWABLE_USER, FLOWABLE_PASS } = require("./flowableClient");
+const auditsRouter = require("./routes/audits");
+const tasksRouter = require("./routes/tasks");
+const attachmentsRouter = require("./routes/attachments");
 
 const app = express();
 
@@ -11,28 +361,22 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(express.static("public"));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 const FLOWABLE_BASE = process.env.FLOWABLE_BASE || "http://localhost:8080/flowable-ui/process-api";
-const FLOWABLE_AUTH = "Basic " + Buffer.from("admin:test").toString("base64");
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BINARY PROXY — must be registered BEFORE the generic JSON proxy below.
-//
-// WHY ORDER MATTERS:
-//   Express matches app.use('/flowable-api') before any specific app.get()
-//   routes registered afterwards. If the generic proxy is first, it consumes
-//   every /flowable-api/* request and calls res.json() on the response —
-//   which corrupts binary PNG data into garbage. These binary routes must
-//   come first so Express reaches them before the catch-all.
-//
-// ROUTES HANDLED HERE:
-//   1. /flowable-api/repository/deployments/:id/resourcedata/:filename
-//      → The correct image URL used by WorkflowView (diagramResource path
-//        with "resources" swapped to "resourcedata").
-//
-//   2. /flowable-api/repository/process-definitions/:id/image
-//      → Legacy image endpoint kept for backward compatibility.
-// ─────────────────────────────────────────────────────────────────────────────
+// ATR_EXTENSION_APPROVAL runs on Flowable's CMMN engine, which is a
+// separate REST app from the process (BPMN) engine above. Defaults to
+// swapping "process-api" for "cmmn-api" on the same host, matching a
+// standard flowable-ui deployment. Override with FLOWABLE_CMMN_BASE if
+// your deployment differs.
+const FLOWABLE_CMMN_BASE =
+  process.env.FLOWABLE_CMMN_BASE || FLOWABLE_BASE.replace("/process-api", "/cmmn-api");
+
+// ── Domain APIs ──────────────────────────────────────────────
+app.use("/api/audits", auditsRouter);
+app.use("/api/tasks", tasksRouter);
+app.use("/api/attachments", attachmentsRouter);
 
 // Route 1 — resourcedata (binary PNG from deployment)
 app.get(
@@ -41,84 +385,125 @@ app.get(
     const { deploymentId, filename } = req.params;
     const targetUrl = `${FLOWABLE_BASE}/repository/deployments/${deploymentId}/resourcedata/${filename}`;
 
-    console.log(`\n[BINARY] GET ${targetUrl}`);
-
-    try {
-      // Use node-fetch / built-in fetch to get raw binary — axios with
-      // responseType: 'arraybuffer' also works equally well.
-      const upstream = await fetch(targetUrl, {
-        headers: { Authorization: FLOWABLE_AUTH },
-      });
-
-      if (!upstream.ok) {
-        console.error(`[BINARY] ❌ upstream ${upstream.status}`);
-        return res.status(upstream.status).end();
-      }
-
-      const contentType = upstream.headers.get('Content-Type') || 'image/png';
-      console.log(`[BINARY] ✅ ${upstream.status} content-type: ${contentType}`);
-
-      res.set('Content-Type', contentType);
-      res.set('Cache-Control', 'no-store'); // prevent stale 304 responses
-
-      const buffer = await upstream.arrayBuffer();
-      return res.send(Buffer.from(buffer));
-
-    } catch (err) {
-      console.error('[BINARY] ❌ fetch error', err.message);
-      return res.status(500).json({ error: err.message });
-    }
-  }
-);
-
-// Route 2 — legacy /image endpoint (kept for backward compatibility)
-app.get(
-  '/flowable-api/repository/process-definitions/:id/image',
-  async (req, res) => {
-    const targetUrl = `${FLOWABLE_BASE}/repository/process-definitions/${req.params.id}/image`;
-
-    console.log(`\n[BINARY] GET ${targetUrl}`);
-
     try {
       const upstream = await fetch(targetUrl, {
         headers: { Authorization: FLOWABLE_AUTH },
       });
 
       if (!upstream.ok) {
-        console.error(`[BINARY] ❌ upstream ${upstream.status}`);
         return res.status(upstream.status).end();
       }
 
       const contentType = upstream.headers.get('Content-Type') || 'image/png';
-      console.log(`[BINARY] ✅ ${upstream.status} content-type: ${contentType}`);
-
       res.set('Content-Type', contentType);
       res.set('Cache-Control', 'no-store');
 
       const buffer = await upstream.arrayBuffer();
       return res.send(Buffer.from(buffer));
-
     } catch (err) {
-      console.error('[BINARY] ❌ fetch error', err.message);
       return res.status(500).json({ error: err.message });
     }
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GENERIC JSON PROXY — handles all other /flowable-api/* requests.
+// Route 2 — legacy /image endpoint
+app.get(
+  '/flowable-api/repository/process-definitions/:id/image',
+  async (req, res) => {
+    const targetUrl = `${FLOWABLE_BASE}/repository/process-definitions/${req.params.id}/image`;
+
+    try {
+      const upstream = await fetch(targetUrl, {
+        headers: { Authorization: FLOWABLE_AUTH },
+      });
+
+      if (!upstream.ok) {
+        return res.status(upstream.status).end();
+      }
+
+      const contentType = upstream.headers.get('Content-Type') || 'image/png';
+      res.set('Content-Type', contentType);
+      res.set('Cache-Control', 'no-store');
+
+      const buffer = await upstream.arrayBuffer();
+      return res.send(Buffer.from(buffer));
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────
+// Route 3 — TASK ATTACHMENT UPLOAD (multipart passthrough)
 //
-// Registered AFTER the binary routes above so it only catches non-image
-// requests. Uses res.json() which is correct for JSON API responses but
-// would corrupt binary data — hence why the binary routes come first.
-// ─────────────────────────────────────────────────────────────────────────────
+// Must be registered BEFORE the generic JSON proxy below — Express
+// matches routes in declaration order, and this one needs to intercept
+// POST /flowable-api/runtime/tasks/:taskId/attachments before it falls
+// through to the catch-all.
+//
+// Why this can't go through the generic proxy: that proxy hard-codes
+// 'Content-Type: application/json' on every outgoing request and only
+// forwards req.body, which express.json() only populates for bodies
+// that were actually application/json. A multipart/form-data upload
+// (boundary + file bytes) never gets parsed by express.json(), so
+// req.body is empty for this request — and even if it weren't, forcing
+// application/json on the way out throws away the multipart boundary
+// entirely. Flowable then receives something that claims to be JSON but
+// isn't, and correctly rejects it with 400 Bad Request.
+//
+// Fix: accept the multipart upload with multer (memory storage), then
+// re-encode it as a fresh multipart/form-data request (via the `form-data`
+// package) addressed to Flowable, forwarding the exact same fields the
+// client sent (name, type, description, file).
+// ─────────────────────────────────────────────────────────────
+const upload = multer(); // memory storage — fine for typical evidence-file sizes
+
+app.post(
+  '/flowable-api/runtime/tasks/:taskId/attachments',
+  upload.single('file'),
+  async (req, res) => {
+    const { taskId } = req.params;
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file included in upload (expected multipart field "file").' });
+    }
+
+    const form = new FormData();
+    form.append('name', req.body.name || req.file.originalname);
+    form.append('type', req.body.type || req.file.mimetype || 'application/octet-stream');
+    form.append('description', req.body.description || '');
+    form.append('file', req.file.buffer, {
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+    });
+
+    try {
+      const response = await axios.post(
+        `${FLOWABLE_BASE}/runtime/tasks/${taskId}/attachments`,
+        form,
+        {
+          headers: {
+            ...form.getHeaders(),
+            Authorization: FLOWABLE_AUTH,
+          },
+          timeout: 30000,
+        }
+      );
+      return res.status(response.status).json(response.data);
+    } catch (err) {
+      const status  = err.response?.status || 500;
+      const message = err.response?.data   || err.message;
+      return res.status(status).json({ error: message });
+    }
+  }
+);
+
+// GENERIC JSON PROXY
 app.use('/flowable-api', async (req, res) => {
   const targetUrl = `${FLOWABLE_BASE}${req.path}`;
   const queryString = Object.keys(req.query).length
     ? '?' + new URLSearchParams(req.query).toString()
     : '';
-
-  console.log(`\n[PROXY] ${req.method} ${targetUrl}${queryString}`);
 
   try {
     const response = await axios({
@@ -132,18 +517,43 @@ app.use('/flowable-api', async (req, res) => {
       timeout: 30000,
     });
 
-    console.log(`[PROXY] ✅ ${response.status}`);
     return res.status(response.status).json(response.data);
-
   } catch (err) {
     const status  = err.response?.status || 500;
     const message = err.response?.data   || err.message;
-    console.error(`[PROXY] ❌ ${status}`, message);
     return res.status(status).json({ error: message });
   }
 });
 
-// ── POST /start-process ──────────────────────────────────────
+// GENERIC JSON PROXY — CMMN engine (ATR_EXTENSION_APPROVAL case tasks:
+// commercialHeadApprovalTask / functionalHeadApprovalTask). Mirrors the
+// /flowable-api proxy above, just pointed at the CMMN REST app.
+app.use('/cmmn-flowable-api', async (req, res) => {
+  const targetUrl = `${FLOWABLE_CMMN_BASE}${req.path}`;
+  const queryString = Object.keys(req.query).length
+    ? '?' + new URLSearchParams(req.query).toString()
+    : '';
+
+  try {
+    const response = await axios({
+      method:  req.method,
+      url:     targetUrl + queryString,
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': FLOWABLE_AUTH,
+      },
+      data:    ['POST', 'PUT'].includes(req.method) ? req.body : undefined,
+      timeout: 30000,
+    });
+
+    return res.status(response.status).json(response.data);
+  } catch (err) {
+    const status  = err.response?.status || 500;
+    const message = err.response?.data   || err.message;
+    return res.status(status).json({ error: message });
+  }
+});
+
 app.post("/start-process", async (req, res) => {
   const { fullName, emailAddress } = req.body;
   if (!fullName || !emailAddress) {
@@ -167,23 +577,20 @@ app.post("/start-process", async (req, res) => {
   }
 });
 
-// ── POST /login ──────────────────────────────────────────────
-app.post("/login", (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ success: false, error: "Missing email or password" });
-  }
-  if (email === "abc@gmail.com" && password === "123") {
-    return res.json({ success: true });
-  }
-  return res.status(401).json({ success: false, error: "Invalid email or password." });
-});
-
-// ── GET /health ──────────────────────────────────────────────
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
-app.listen(3000, () => {
-  console.log("\n🚀 Node server  → http://localhost:3000");
-  console.log(`   Flowable      → ${FLOWABLE_BASE}`);
-  console.log(`   Proxy         → /flowable-api → Flowable\n`);
-});
+const PORT = process.env.PORT || 3000;
+
+initDb()
+  .catch((err) => console.warn('[PG] init skipped:', err.message))
+  .finally(() => {
+    app.listen(PORT, () => {
+      console.log(`\n🚀 Node server  → http://localhost:${PORT}`);
+      console.log(`   Flowable      → ${FLOWABLE_BASE}`);
+      console.log(`   Flowable auth → ${FLOWABLE_USER}:${FLOWABLE_PASS}`);
+      console.log(`   Proxy         → /flowable-api → Flowable (BPMN)`);
+      console.log(`   Proxy         → /cmmn-flowable-api → Flowable (CMMN) → ${FLOWABLE_CMMN_BASE}`);
+      console.log(`   Attachments   → POST /flowable-api/runtime/tasks/:taskId/attachments (multipart passthrough)`);
+      console.log(`   Domain APIs   → /api/audits, /api/tasks, /api/attachments\n`);
+    });
+  });

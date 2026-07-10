@@ -37,7 +37,8 @@ const AVATAR_COLORS: string[] = [
 ]
 
 const ROLE_OPTIONS: string[] = [
-  'Lead Auditor', 'Plant Manager', 'Safety Officer', 'Production Lead',
+  'Lead Auditor', 'Auditor', 'Auditee', 'Commercial Head', 'Functional Head',
+  'Plant Manager', 'Safety Officer', 'Production Lead',
   'Environmental Auditor', 'Quality Inspector', 'Administrator',
 ]
 

@@ -17,11 +17,13 @@ import {
   ArrowLeftIcon,
 } from 'lucide-react';
 import { completeTask } from './services/flowableApi';
+// import { uploadAttachments } from './services/auditApi';
 
 export function CompleteStep() {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const processInstanceId = localStorage.getItem('currentProcessInstanceId') || '';
   const stepName    = localStorage.getItem('currentStepName')    || 'Audit Step';
   const auditName   = localStorage.getItem('currentAuditName')   || 'Audit';
   const auditorName = localStorage.getItem('currentAuditorName') || '';
@@ -29,6 +31,7 @@ export function CompleteStep() {
 
   const [comments,    setComments]    = useState('');
   const [fileName,    setFileName]    = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [submitting,  setSubmitting]  = useState(false);
   const [submitError, setSubmitError] = useState('');
   const [success,     setSuccess]     = useState(false);
@@ -36,11 +39,15 @@ export function CompleteStep() {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) setFileName(file.name);
+    if (file) {
+      setFileName(file.name);
+      setSelectedFile(file);
+    }
   };
 
   const handleRemoveFile = () => {
     setFileName('');
+    setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
@@ -56,6 +63,9 @@ export function CompleteStep() {
     setSubmitting(true);
     setSubmitError('');
     try {
+      if (selectedFile && processInstanceId && auditorName) {
+        // await uploadAttachments(processInstanceId, [selectedFile], auditorName, taskId);
+      }
       await completeTask(taskId, {
         stepName,
         comments,
