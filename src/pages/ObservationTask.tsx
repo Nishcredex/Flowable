@@ -841,14 +841,14 @@ function AtrAuditorReviewForm({
           className="py-2.5 bg-red-600 text-white rounded-lg text-sm font-medium disabled:opacity-50">
           Reject
         </button>
-        <button onClick={() => decide('INVALID')} disabled={submitting}
+        {/* <button onClick={() => decide('INVALID')} disabled={submitting}
           className="py-2.5 bg-gray-500 text-white rounded-lg text-sm font-medium disabled:opacity-50">
           Invalid
         </button>
         <button onClick={() => decide('BLOCKED')} disabled={submitting}
           className="py-2.5 bg-amber-500 text-white rounded-lg text-sm font-medium disabled:opacity-50">
           Blocked
-        </button>
+        </button> */}
       </div>
     </div>
   );

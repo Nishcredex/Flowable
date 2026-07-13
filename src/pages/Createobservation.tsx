@@ -56,6 +56,7 @@ export function CreateAtrObservation() {
   });
   const [commercialHeads, setCommercialHeads] = useState<FlowableUser[]>([]);
   const [functionalHeads, setFunctionalHeads] = useState<FlowableUser[]>([]);
+  const [auditees, setAuditees] = useState<FlowableUser[]>([]);
   const [loadingHeads, setLoadingHeads] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -76,16 +77,19 @@ export function CreateAtrObservation() {
     (async () => {
       setLoadingHeads(true);
       try {
-        const [ch, fh] = await Promise.all([
+        const [ch, fh, au] = await Promise.all([
           getUsersByRole('commercialHead'),
           getUsersByRole('functionalHead'),
+          getUsersByRole('auditee'),
         ]);
         setCommercialHeads(ch);
         setFunctionalHeads(fh);
+        setAuditees(au);
         setForm((f) => ({
           ...f,
           commercialHeadId: f.commercialHeadId || ch[0]?.id || '',
           functionalHeadId: f.functionalHeadId || fh[0]?.id || '',
+          // auditeeId intentionally left blank so the auditor must pick one
         }));
       } catch {
         // Non-fatal — auditor can still type an id manually below.
@@ -190,8 +194,22 @@ export function CreateAtrObservation() {
 
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-4">
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Auditee (Flowable user id)" required>
-            <input className={inputCls} value={form.auditeeId} onChange={(e) => set('auditeeId', e.target.value)} placeholder="e.g. auditee.suresh" />
+          <Field label="Auditee" required>
+            {auditees.length > 0 ? (
+              <select className={inputCls} value={form.auditeeId} onChange={(e) => set('auditeeId', e.target.value)}>
+                <option value="">Select auditee…</option>
+                {auditees.map((u) => (
+                  <option key={u.id} value={u.id}>{u.firstName} {u.lastName} ({u.id})</option>
+                ))}
+              </select>
+            ) : (
+              <input
+                className={inputCls}
+                value={form.auditeeId}
+                onChange={(e) => set('auditeeId', e.target.value)}
+                placeholder={loadingHeads ? 'Loading…' : 'No user with role Auditee found — enter user id'}
+              />
+            )}
           </Field>
           <Field label="Audit Name">
             <input className={inputCls} value={form.auditName} onChange={(e) => set('auditName', e.target.value)} />

@@ -13,6 +13,25 @@
 //  read-only badge (via the same STATUS_LABELS/statusBadgeClass used on
 //  the task detail page) instead of the editable Jira-style dropdown —
 //  ATR status is workflow-driven, not something you hand-set here.
+//
+//  THIS VERSION ALSO FIXES:
+//  1. commercialHeadApprovalTask / functionalHeadApprovalTask are CMMN
+//     case tasks, not BPMN tasks — they live at task.caseInstanceId,
+//     not task.processInstanceId. enrichTask() was always calling
+//     getProcessVariables(task.processInstanceId) for every task,
+//     which is wrong for these rows and silently returned empty/stale
+//     variables — so a rejection by the Commercial/Functional Head
+//     never actually reached the badge. Now branches to
+//     getAtrCaseVariables(task.caseInstanceId) for case tasks, same
+//     pattern ObservationTask.tsx already uses, and derives status from
+//     commercialDecision/functionalDecision directly.
+//  2. Inbox is sorted newest-first. For observation rows this sorts by
+//     the timestamp embedded in observationId ("OBS-<Date.now() at
+//     creation>") rather than task.created — task.created tracks the
+//     *current* task instance, which can be misleading once a task has
+//     been returned/resubmitted or routed through the extension-
+//     approval case, so it doesn't reliably reflect "when was this
+//     observation actually created".
 // ============================================================
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -52,7 +71,9 @@ import {
   getVariableValue,
   isObservationTask,
   isAtrTask,
+  isAtrCaseTask,
   getAtrCaseTasksByAssignee,
+  getAtrCaseVariables,
 } from './services/flowableApi';
 import { STATUS_LABELS, statusBadgeClass as atrStatusBadgeClass } from '../constants/auditStatus';
 
@@ -150,12 +171,23 @@ interface EnrichedTask {
   isObservation: boolean;
   isGroupTask:  boolean;
   /** Raw ATR workflow status (e.g. IN_PROGRESS, RETURNED, CLOSED,
-   *  PENDING_EXTENSION_APPROVAL) — only set when isObservation is true.
-   *  This is what actually drives the status badge for observation rows,
-   *  NOT the generic `status` field above (which observation workflows
-   *  never write to). */
+   *  PENDING_EXTENSION_APPROVAL, REJECTED) — only set when isObservation
+   *  is true. This is what actually drives the status badge for
+   *  observation rows, NOT the generic `status` field above (which
+   *  observation workflows never write to). For CMMN case-task rows
+   *  (commercialHeadApprovalTask / functionalHeadApprovalTask) this is
+   *  derived from commercialDecision/functionalDecision instead of a
+   *  process-level `status` var — see enrichTask(). */
   atrStatus?:      string;
   atrStatusLabel?: string;
+  /** Raw observationId (e.g. "OBS-1783940735549") — the numeric suffix
+   *  is Date.now() at the moment CreateAtrObservation.tsx created it, so
+   *  it's a more reliable "when was this actually created" signal than
+   *  task.created (which tracks the *current* task instance and can lag
+   *  behind the observation's real creation time once it's been
+   *  returned/resubmitted, or routed through the extension-approval
+   *  case). Used for sorting the inbox newest-first. */
+  observationId?: string;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -204,24 +236,41 @@ function priorityBadgeClass(priority: string): string {
   return 'bg-green-100 text-green-700';
 }
 
-// Enrich a single Flowable task with process variables
+// Enrich a single Flowable task with process/case variables
 async function enrichTask(task: FlowableTask, opts?: { isGroupTask?: boolean }): Promise<EnrichedTask> {
+  const isCaseTask = isAtrCaseTask(task);
+
   let vars: ProcessVariable[] = [];
   try {
-    vars = await getProcessVariables(task.processInstanceId);
+    // commercialHeadApprovalTask / functionalHeadApprovalTask live in the
+    // CMMN engine — their variables are on the CASE instance
+    // (task.caseInstanceId), not the BPMN process instance. Calling
+    // getProcessVariables(task.processInstanceId) for these rows was
+    // silently returning empty/wrong data, which is why a Commercial or
+    // Functional Head's decision (including a rejection) never made it
+    // into the inbox badge.
+    vars = isCaseTask
+      ? await getAtrCaseVariables(task.caseInstanceId || '')
+      : await getProcessVariables(task.processInstanceId);
   } catch { /* skip if unavailable */ }
 
   const priorityVar = getVariableValue(vars, 'priority');
 
   const effectiveDueDate =
-    task.dueDate || getVariableValue(vars, 'dueDate') || getVariableValue(vars, 'targetDate') || null;
+    task.dueDate
+    || getVariableValue(vars, 'dueDate')
+    || getVariableValue(vars, 'targetDate')
+    || getVariableValue(vars, 'requestedExtensionDate')
+    || null;
 
   const savedStatus = getVariableValue(vars, 'taskStatus') as TaskStatus | null;
 
   const observation = isObservationTask(task) || isAtrTask(task);
 
+  const observationIdVar = observation ? getVariableValue(vars, 'observationId') : undefined;
+
   const auditName = observation
-    ? `Observation ${getVariableValue(vars, 'observationId') || ''}`.trim()
+    ? `Observation ${observationIdVar || ''}`.trim()
     : getVariableValue(vars, 'auditName') || task.processDefinitionId || 'Audit';
 
   const stepName = observation
@@ -233,8 +282,32 @@ async function enrichTask(task: FlowableTask, opts?: { isGroupTask?: boolean }):
   // auditee-action and auditor-review endpoints). Read it directly
   // rather than relying on the Jira-style `taskStatus` variable, which
   // these workflows never write.
-  const atrStatus = observation ? getVariableValue(vars, 'status') : undefined;
-  const atrStatusLabel = atrStatus ? STATUS_LABELS[atrStatus] || atrStatus : undefined;
+  //
+  // CMMN case tasks don't have a `status` variable at all — they're
+  // approval steps inside the extension-approval case, so their state
+  // has to be read off commercialDecision / functionalDecision instead
+  // (seeded null at case start, set to 'APPROVE' or 'REJECT' once this
+  // head decides — see startAtrExtensionCase / completeAtrCaseTask in
+  // flowableApi.ts).
+  let atrStatus: string | undefined;
+  if (observation && isCaseTask) {
+    const decisionField =
+      task.taskDefinitionKey === 'commercialHeadApprovalTask' ? 'commercialDecision' : 'functionalDecision';
+    const decision = getVariableValue(vars, decisionField);
+    atrStatus =
+      decision === 'REJECT' ? 'REJECTED' :
+      decision === 'APPROVE' ? 'APPROVED' :
+      'PENDING_EXTENSION_APPROVAL';
+  } else if (observation) {
+    atrStatus = getVariableValue(vars, 'status');
+  }
+
+  // Fallback so a rejection always reads as "Rejected" in the badge even
+  // if STATUS_LABELS (constants/auditStatus.ts) doesn't have an entry
+  // for the exact raw status string this workflow wrote.
+  const atrStatusLabel = atrStatus
+    ? (atrStatus.toUpperCase().includes('REJECT') ? 'Rejected' : STATUS_LABELS[atrStatus] || atrStatus)
+    : undefined;
 
   return {
     task: { ...task, dueDate: effectiveDueDate },
@@ -250,6 +323,7 @@ async function enrichTask(task: FlowableTask, opts?: { isGroupTask?: boolean }):
     isGroupTask:  opts?.isGroupTask ?? false,
     atrStatus,
     atrStatusLabel,
+    observationId: observationIdVar,
   };
 }
 
@@ -505,7 +579,27 @@ export function MyTasks() {
         unclaimedGroupTasks.map((t) => enrichTask(t, { isGroupTask: true }))
       );
 
-      setTasks([...enrichedAssignee, ...enrichedGroup]);
+      // Newest FIRST. For observation rows, sort by the timestamp
+      // embedded in observationId ("OBS-<Date.now()-at-creation>") —
+      // that's the actual moment the auditor created the observation.
+      // task.created tracks the *current* task instance instead, which
+      // can be misleading once a task has been returned/resubmitted or
+      // routed through the extension-approval case (a "new" task row can
+      // get a fresh `created` timestamp for an old observation) — so
+      // it's only used as the sort key for non-observation rows, or as a
+      // fallback if observationId is somehow missing/malformed.
+      const sortKey = (e: EnrichedTask): number => {
+        if (e.observationId) {
+          const match = e.observationId.match(/(\d+)$/);
+          if (match) return Number(match[1]);
+        }
+        const t = new Date(e.task.created).getTime();
+        return isNaN(t) ? 0 : t;
+      };
+
+      const byNewestFirst = (a: EnrichedTask, b: EnrichedTask) => sortKey(b) - sortKey(a);
+
+      setTasks([...enrichedAssignee, ...enrichedGroup].sort(byNewestFirst));
     } catch (err) {
       setError(
         err instanceof Error
@@ -588,10 +682,10 @@ export function MyTasks() {
   // ── Filter by search + status tab ─────────────────────────
   // NOTE: the status filter pills below are still driven off the
   // Jira-style TaskStatus enum (`e.status`), so they won't yet bucket
-  // observation rows by their real RETURNED/CLOSED/etc status — only
-  // the inbox table's Status column reflects that (via atrStatusLabel).
-  // Happy to wire the filter pills to atrStatus too if you want that;
-  // just say the word.
+  // observation rows by their real RETURNED/CLOSED/REJECTED/etc status —
+  // only the inbox table's Status column reflects that (via
+  // atrStatusLabel). Happy to wire the filter pills to atrStatus too if
+  // you want that; just say the word.
   const filtered = tasks.filter((e) => {
     const matchesSearch =
       e.task.name.toLowerCase().includes(searchQuery.toLowerCase()) ||

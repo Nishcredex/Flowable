@@ -1,9 +1,15 @@
 
 
-
 // const FLOWABLE_BASE = 'http://localhost:8080/flowable-ui/process-api';
-const FLOWABLE_BASE = 'http://localhost:3000/flowable-api';
-const CREDENTIALS   = btoa('admin:admin'); // base64 of "admin:test"
+const FLOWABLE_BASE = import.meta.env.VITE_FLOWABLE_API_BASE ?? 'http://localhost:3000/flowable-api';
+// NOTE: shipping Basic Auth credentials in frontend code (even via env
+// vars) means they end up readable in the built JS bundle. Fine for local
+// dev against a sandboxed Flowable instance; for a real deployment, proxy
+// these calls through your own backend (server.js) and keep the Flowable
+// credentials server-side only.
+const CREDENTIALS   = btoa(
+  `${import.meta.env.VITE_FLOWABLE_USER ?? 'admin'}:${import.meta.env.VITE_FLOWABLE_PASSWORD ?? 'admin'}`
+);
 
 const HEADERS = {
   'Content-Type':  'application/json',
@@ -922,7 +928,7 @@ export function isAtrTask(task: Pick<FlowableTask, 'taskDefinitionKey'>): boolea
 // (see server.js), which points at Flowable's CMMN REST app rather than
 // the BPMN process-api app. Needed because commercialHeadApprovalTask /
 // functionalHeadApprovalTask live in the CMMN engine.
-const FLOWABLE_CMMN_BASE = 'http://localhost:3000/cmmn-flowable-api';
+const FLOWABLE_CMMN_BASE = import.meta.env.VITE_FLOWABLE_CMMN_API_BASE ?? 'http://localhost:3000/cmmn-flowable-api';
 
 async function cmmnFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${FLOWABLE_CMMN_BASE}${endpoint}`;
@@ -1128,7 +1134,7 @@ export interface AtrExtensionCaseRecord {
  *  bucket each by the *actual* decision variable rather than a status
  *  string that's never set. */
 export async function getAtrExtensionCasesForHead(
-  role: 'commercialHead' | 'functionalHead',
+  role:'commercialHead' | 'functionalHead' | 'auditee',
   userId: string
 ): Promise<AtrExtensionCaseRecord[]> {
   if (!userId) return [];
@@ -1217,24 +1223,32 @@ export async function completeAtrCaseTask(
  *  hardcoding anything — if nobody is configured with that role yet, the
  *  caller falls back to a manual picker. */
 export async function getUsersByRole(
-  role: 'commercialHead' | 'functionalHead'
+  role: 'commercialHead' | 'functionalHead' | 'auditee'
 ): Promise<FlowableUser[]> {
-  const roleLabel = role === 'commercialHead' ? 'Commercial Head' : 'Functional Head';
+  const roleLabel =
+    role === 'commercialHead' ? 'Commercial Head' :
+    role === 'functionalHead' ? 'Functional Head' :
+    'Auditee';
   const [users, profiles] = await Promise.all([getAllUsers(), getAllUserProfiles()]);
   const byProfile = users.filter((u) => profiles.get(u.id)?.role === roleLabel);
   if (byProfile.length) return byProfile;
 
-  // Fall back to Flowable identity group membership (${role} group id),
-  // matching how the old candidate-group tasks resolved these same roles.
+  // Fall back to Flowable identity group membership. Group ids in this
+  // Flowable instance are free-text/admin-created (e.g. "Auditee",
+  // "Commercial head Group", "Functional head group" — see Users >
+  // Groups in the Flowable UI), not the camelCase role key itself, so an
+  // exact groups.includes(role) check never matches. Use the same
+  // normalizeGroupToken() comparison loginWithFlowable()/mapRole() below
+  // already rely on for this exact mismatch.
+  const needle = normalizeGroupToken(role);
   const groupChecks = await Promise.allSettled(
     users.map(async (u) => ({ u, groups: await getUserGroups(u.id) }))
   );
   return groupChecks
     .filter((r): r is PromiseFulfilledResult<{ u: FlowableUser; groups: string[] }> => r.status === 'fulfilled')
-    .filter((r) => r.value.groups.includes(role))
+    .filter((r) => r.value.groups.some((g) => normalizeGroupToken(g).includes(needle)))
     .map((r) => r.value.u);
 }
-
 // ─────────────────────────────────────────────────────────────
 // PROJECT INTERFACES
 // ─────────────────────────────────────────────────────────────
