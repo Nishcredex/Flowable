@@ -1,6 +1,18 @@
 // ============================================================
 //  MyTasks.tsx
 //  Updated with Flowable integration + Jira-style multi-status
+//
+//  CHANGE IN THIS VERSION: observation/ATR tasks (auditeeSubmitAction,
+//  auditorReviewEvidence, commercialHeadApprovalTask,
+//  functionalHeadApprovalTask) never write the generic `taskStatus`
+//  process variable — only the manual Jira-style status dropdown does.
+//  So enrichTask() was always defaulting these rows to 'Open', no
+//  matter what the workflow's real `status` variable said (RETURNED,
+//  CLOSED, PENDING_EXTENSION_APPROVAL, etc). Fix: for observation rows,
+//  read the `status` process variable directly and render it as a
+//  read-only badge (via the same STATUS_LABELS/statusBadgeClass used on
+//  the task detail page) instead of the editable Jira-style dropdown —
+//  ATR status is workflow-driven, not something you hand-set here.
 // ============================================================
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
@@ -42,9 +54,10 @@ import {
   isAtrTask,
   getAtrCaseTasksByAssignee,
 } from './services/flowableApi';
+import { STATUS_LABELS, statusBadgeClass as atrStatusBadgeClass } from '../constants/auditStatus';
 
 // ─────────────────────────────────────────────────────────────
-// STATUS DEFINITIONS — Jira-style
+// STATUS DEFINITIONS — Jira-style (used for NON-observation tasks only)
 // ─────────────────────────────────────────────────────────────
 
 type TaskStatus =
@@ -135,10 +148,14 @@ interface EnrichedTask {
   daysLeft:     string;
   status:       TaskStatus;
   isObservation: boolean;
-  /** True when this task came from a candidate-group query (no direct
-   *  assignee yet) rather than getTasksByAssignee. Commercial/Functional
-   *  Head approvals surface this way until someone opens and claims one. */
   isGroupTask:  boolean;
+  /** Raw ATR workflow status (e.g. IN_PROGRESS, RETURNED, CLOSED,
+   *  PENDING_EXTENSION_APPROVAL) — only set when isObservation is true.
+   *  This is what actually drives the status badge for observation rows,
+   *  NOT the generic `status` field above (which observation workflows
+   *  never write to). */
+  atrStatus?:      string;
+  atrStatusLabel?: string;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -196,24 +213,13 @@ async function enrichTask(task: FlowableTask, opts?: { isGroupTask?: boolean }):
 
   const priorityVar = getVariableValue(vars, 'priority');
 
-  // task.dueDate is null if not set directly on the Flowable task.
-  // Fall back to the process-level dueDate variable set during CreateAudit
-  // (or during CreateObservation, for auditObservationWorkflow tasks).
   const effectiveDueDate =
     task.dueDate || getVariableValue(vars, 'dueDate') || getVariableValue(vars, 'targetDate') || null;
 
-  // Read persisted status from process variable, default to 'Open'
   const savedStatus = getVariableValue(vars, 'taskStatus') as TaskStatus | null;
 
-  // Covers both the old auditObservationWorkflow tasks and the new
-  // ATR_OBSERVATION_LIFECYCLE / ATR_EXTENSION_APPROVAL task keys — both
-  // route to the same generic /observations/tasks/:id page, which
-  // dispatches on taskDefinitionKey.
   const observation = isObservationTask(task) || isAtrTask(task);
 
-  // auditObservationWorkflow instances don't have auditName/stepName —
-  // they have observationId/observationDescription instead. Fall back to
-  // those so the inbox table still shows something meaningful.
   const auditName = observation
     ? `Observation ${getVariableValue(vars, 'observationId') || ''}`.trim()
     : getVariableValue(vars, 'auditName') || task.processDefinitionId || 'Audit';
@@ -221,6 +227,14 @@ async function enrichTask(task: FlowableTask, opts?: { isGroupTask?: boolean }):
   const stepName = observation
     ? getVariableValue(vars, 'observationDescription') || task.name || '—'
     : getVariableValue(vars, 'stepName') || task.name || '—';
+
+  // ATR/observation workflows track their own business status in the
+  // `status` process variable (set by CreateAtrObservation / the
+  // auditee-action and auditor-review endpoints). Read it directly
+  // rather than relying on the Jira-style `taskStatus` variable, which
+  // these workflows never write.
+  const atrStatus = observation ? getVariableValue(vars, 'status') : undefined;
+  const atrStatusLabel = atrStatus ? STATUS_LABELS[atrStatus] || atrStatus : undefined;
 
   return {
     task: { ...task, dueDate: effectiveDueDate },
@@ -234,6 +248,8 @@ async function enrichTask(task: FlowableTask, opts?: { isGroupTask?: boolean }):
     status:       savedStatus || 'Open',
     isObservation: observation,
     isGroupTask:  opts?.isGroupTask ?? false,
+    atrStatus,
+    atrStatusLabel,
   };
 }
 
@@ -266,6 +282,8 @@ function StatusBadge({ status }: { status: TaskStatus }) {
 
 // ─────────────────────────────────────────────────────────────
 // STATUS DROPDOWN — click the status pill to change it
+// (only used for non-observation tasks — see ObservationStatusBadge
+// below for observation/ATR rows, which are read-only here)
 // ─────────────────────────────────────────────────────────────
 
 interface StatusDropdownProps {
@@ -278,7 +296,6 @@ function StatusDropdown({ current, onChange, loading }: StatusDropdownProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
@@ -338,6 +355,21 @@ function StatusDropdown({ current, onChange, loading }: StatusDropdownProps) {
         </div>
       )}
     </div>
+  );
+}
+
+// Read-only status pill for observation/ATR rows — status here is
+// workflow-driven (moves when someone submits/reviews/approves the
+// task), so it isn't editable from the inbox the way the generic
+// Jira-style status is.
+function ObservationStatusBadge({ enriched }: { enriched: EnrichedTask }) {
+  return (
+    <span
+      className={`badge ${atrStatusBadgeClass(enriched.atrStatus || '')}`}
+      title="Set by the workflow — open the task to change it"
+    >
+      {enriched.atrStatusLabel || 'Open'}
+    </span>
   );
 }
 
@@ -407,11 +439,15 @@ function TaskRow({
       <td>{auditName}</td>
       <td className={priorityClass}>{priority}</td>
       <td onClick={(e) => e.stopPropagation()}>
-        <StatusDropdown
-          current={status}
-          loading={statusUpdating}
-          onChange={(newStatus) => onStatusChange(enriched, newStatus)}
-        />
+        {enriched.isObservation ? (
+          <ObservationStatusBadge enriched={enriched} />
+        ) : (
+          <StatusDropdown
+            current={status}
+            loading={statusUpdating}
+            onChange={(newStatus) => onStatusChange(enriched, newStatus)}
+          />
+        )}
       </td>
       <td>{task.assignee || '—'}</td>
       <td className={task.dueDate && dueDateColor(task.dueDate).includes('red') ? 'priority-high' : task.dueDate && dueDateColor(task.dueDate).includes('amber') ? 'priority-med' : ''}>
@@ -429,8 +465,7 @@ function TaskRow({
 export function MyTasks() {
   const navigate = useNavigate();
 
-  // const currentUser = localStorage.getItem('currentAuditorName') || 'admin';
- const { user }    = useAuth();
+  const { user }    = useAuth();
   const currentUser = user?.id || 'admin';
   const [activeTab,       setActiveTab]       = useState<'my' | 'group' | 'completed'>('my');
   const [searchQuery,     setSearchQuery]     = useState('');
@@ -450,20 +485,9 @@ export function MyTasks() {
       const [assigneeTasks, groupTasks, atrCaseTasks] = await Promise.all([
         getTasksByAssignee(currentUser, user?.name),
         getTasksByCandidateGroups(userGroups),
-        // commercialHeadApprovalTask / functionalHeadApprovalTask live in
-        // Flowable's CMMN engine and are assigned directly (no candidate
-        // group), so they need their own query rather than
-        // getTasksByCandidateGroups above.
         getAtrCaseTasksByAssignee(currentUser),
       ]);
 
-      // Flowable's BPMN and CMMN engines share one underlying task table,
-      // so /runtime/tasks?assignee= (getTasksByAssignee) can already
-      // include CMMN case tasks like commercialHeadApprovalTask /
-      // functionalHeadApprovalTask alongside /cmmn-runtime/tasks
-      // (getAtrCaseTasksByAssignee) returning the *same* task again.
-      // Dedupe by id when merging, or React sees two rows with the same
-      // key (and the task appears to double-render in the table).
       const seenAssigneeIds = new Set<string>();
       const allAssigneeTasks: typeof assigneeTasks = [];
       for (const t of [...assigneeTasks, ...atrCaseTasks]) {
@@ -473,8 +497,6 @@ export function MyTasks() {
         }
       }
 
-      // A group task that's already been claimed by this user will also
-      // come back from getTasksByAssignee — don't show it twice.
       const assigneeIds = new Set(allAssigneeTasks.map((t) => t.id));
       const unclaimedGroupTasks = groupTasks.filter((t) => !assigneeIds.has(t.id));
 
@@ -500,8 +522,6 @@ export function MyTasks() {
   // ── View Task ──────────────────────────────────────────────
   const handleViewTask = (enriched: EnrichedTask) => {
     if (enriched.isObservation) {
-      // No localStorage needed here — ObservationTask.tsx fetches the
-      // task + process variables live from the URL param.
       navigate(`/observations/tasks/${enriched.task.id}`);
       return;
     }
@@ -513,10 +533,6 @@ export function MyTasks() {
 
   // ── Complete task in Flowable ──────────────────────────────
   const handleCompleteTask = async (enriched: EnrichedTask) => {
-    // Observation-workflow tasks (submitCorrectiveAction, reviewCorrectiveAction,
-    // approveExtensionCommercial/Functional) each need their own real payload
-    // shape — completing them here with a generic approvalDecision variable
-    // would satisfy the wrong gateway condition. Send the user to the real form.
     if (enriched.isObservation) {
       navigate(`/observations/tasks/${enriched.task.id}`);
       return;
@@ -537,19 +553,17 @@ export function MyTasks() {
   };
 
   // ── Update status — saves to Flowable process variable ─────
+  // Not used for observation/ATR tasks — see ObservationStatusBadge,
+  // those rows don't render the editable StatusDropdown at all.
   const handleStatusChange = async (enriched: EnrichedTask, newStatus: TaskStatus) => {
-    // Same reasoning as handleCompleteTask above — don't let the "Completed"
-    // shortcut fire a generic completeTask() against an observation task.
     if (enriched.isObservation && newStatus === 'Completed') {
       navigate(`/observations/tasks/${enriched.task.id}`);
       return;
     }
     setStatusUpdatingId(enriched.task.id);
     try {
-      // Persist to Flowable so it survives page refresh
       await saveProcessVariable(enriched.task.processInstanceId, 'taskStatus', newStatus);
 
-      // If user picked Completed, also complete the Flowable task
       if (newStatus === 'Completed') {
         await completeTask(enriched.task.id, {
           approvalDecision: 'Approved',
@@ -559,7 +573,6 @@ export function MyTasks() {
         return;
       }
 
-      // Otherwise just update local state
       setTasks((prev) =>
         prev.map((t) =>
           t.task.id === enriched.task.id ? { ...t, status: newStatus } : t
@@ -573,6 +586,12 @@ export function MyTasks() {
   };
 
   // ── Filter by search + status tab ─────────────────────────
+  // NOTE: the status filter pills below are still driven off the
+  // Jira-style TaskStatus enum (`e.status`), so they won't yet bucket
+  // observation rows by their real RETURNED/CLOSED/etc status — only
+  // the inbox table's Status column reflects that (via atrStatusLabel).
+  // Happy to wire the filter pills to atrStatus too if you want that;
+  // just say the word.
   const filtered = tasks.filter((e) => {
     const matchesSearch =
       e.task.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -609,8 +628,6 @@ export function MyTasks() {
         </div>
       </div>
 
-      {/* Workspace tab (kept from the source component; only "My" drives
-          the data fetch today, Group/Completed are placeholders for now) */}
       <div className="tab-bar">
         {(['my', 'group', 'completed'] as const).map((tab) => (
           <div
@@ -652,7 +669,6 @@ export function MyTasks() {
         </div>
       </div>
 
-      {/* Loading */}
       {loading && (
         <div className="card">
           <div className="card-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '48px 18px' }}>
@@ -662,7 +678,6 @@ export function MyTasks() {
         </div>
       )}
 
-      {/* Error */}
       {!loading && error && (
         <div className="card" style={{ borderColor: 'var(--danger)', marginBottom: 14 }}>
           <div className="card-body" style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -678,7 +693,6 @@ export function MyTasks() {
         </div>
       )}
 
-      {/* Empty state */}
       {!loading && !error && filtered.length === 0 && (
         <div className="card">
           <div className="card-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '48px 18px', textAlign: 'center' }}>
@@ -697,7 +711,6 @@ export function MyTasks() {
         </div>
       )}
 
-      {/* Task table */}
       {!loading && filtered.length > 0 && (
         <div className="card" style={{ padding: 0 }}>
           <table className="table">

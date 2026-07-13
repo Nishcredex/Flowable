@@ -418,7 +418,7 @@ export function Dashboard() {
             Refresh
           </button>
          {isAuditor && ( <button
-            onClick={() => navigate('/audits/create')}
+            onClick={() => navigate('/observations/new')}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-[#1f4ed8] text-white rounded-md text-[13px] font-medium hover:bg-[#173cab] transition-colors">
             <PlusIcon className="w-3.5 h-3.5" />
             New Audit

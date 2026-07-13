@@ -23,6 +23,7 @@ import { ObservationTask } from './pages/ObservationTask';
 import { CommercialHeadDashboard, FunctionalHeadDashboard } from './pages/HeadDashboards';
 import { RoleRoute, HomeRedirect } from './components/RoleRoute';
 import AdminLayout from './pages/admin/AdminLayout';
+import { ObservationsList } from './pages/ObservationsList';
 import AdminPlaceholder from './pages/admin/AdminPlaceholder';
 import AdminUsers from './pages/admin/AdminUsers';
 import { CreateAtrObservation } from "./pages/Createobservation";
@@ -75,7 +76,8 @@ function AppRoutes() {
           but only admin/auditor can create or record steps against them. */}
       <Route path="/audits" element={
         <RoleRoute allowed={['admin', 'auditor', 'commercialHead', 'functionalHead']}>
-          <Layout><AuditsList /></Layout>
+         
+          <Layout><ObservationsList /></Layout>
         </RoleRoute>
       } />
 
