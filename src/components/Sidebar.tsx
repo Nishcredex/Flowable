@@ -474,11 +474,11 @@ export default function Sidebar() {
       {/* ── Audits & Checklist Library — Admin/Auditor (full) or Heads (read-only) ── */}
       {(isAuditor || isHead) && (
         <>
-          <NavLink to="/audits" className={navClass}>
+          {/* <NavLink to="/audits" className={navClass}>
             <span className="ico"><IcoReports /></span>
             Audits
             {isHead && <ReadOnlyTag />}
-          </NavLink>
+          </NavLink> */}
           <NavLink to="/checklist-library" className={navClass}>
             <span className="ico"><IcoDetail /></span>
             Checklist Library
