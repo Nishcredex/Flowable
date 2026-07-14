@@ -5,6 +5,7 @@ import {
   getTaskById,
   getProcessVariables,
   getVariableValue,
+  saveProcessVariable,
   claimTask,
   OBSERVATION_CANDIDATE_GROUPS,
   getAtrCaseTaskById,
@@ -13,10 +14,13 @@ import {
   addProcessInstanceComment,
   getProcessInstanceAttachments,
   downloadAttachment,
+  getAtrObservationHistoryEvents,
+  summarizeObservationHistory,
   FlowableTask,
   ProcessVariable,
   CommentEntry,
   FlowableAttachment,
+  ObservationHistoryEvent,
   parseChecklistItems,
   saveChecklistItems,
   filterAttachmentsForViewer,
@@ -33,6 +37,10 @@ import { useAuth, getDashboardPath } from '../pages/AuthContext';
 import { FileUpload } from '../components/FileUpload';
 import { CommentThread } from '../components/CommentThread';
 import { STATUS_LABELS, statusBadgeClass } from '../constants/auditStatus';
+
+// ── Toast type shared by ObservationTask and every action form below ──
+type ToastState = { type: 'success' | 'error'; message: string } | null;
+type SetToast = (t: ToastState) => void;
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -53,6 +61,14 @@ const TASK_ROLE_MAP: Record<string, string> = {
   auditorReviewEvidence: 'auditor',
   commercialHeadApprovalTask: 'commercialHead',
   functionalHeadApprovalTask: 'functionalHead',
+};
+
+// Short labels for the step-badge shown next to each history entry.
+const ATR_TASK_STEP_LABELS: Record<string, string> = {
+  auditeeSubmitAction: 'Auditee',
+  auditorReviewEvidence: 'Auditor',
+  commercialHeadApprovalTask: 'Commercial Head',
+  functionalHeadApprovalTask: 'Functional Head',
 };
 
 const TAB_LABELS = ['Action Taken', 'Details', 'History', 'Attachments', 'Workflow'] as const;
@@ -98,6 +114,141 @@ function MetaRow({ label, value, mono }: { label: string; value: React.ReactNode
   );
 }
 
+// ── Toast — small fixed-position success/error banner used across
+// every submit / reject / extension action in this file. Rendered from
+// ObservationTask() itself (both the main view and the "done" screen),
+// with setToast passed down into each action form.
+function Toast({ toast }: { toast: ToastState }) {
+  if (!toast) return null;
+  return (
+    <div
+      className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${
+        toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'
+      }`}
+      role="status"
+    >
+      {toast.message}
+    </div>
+  );
+}
+
+// ── Workflow history timeline — shown at the top of the History tab.
+// Combines finished BPMN tasks (auditeeSubmitAction / auditorReviewEvidence)
+// with finished CMMN tasks from every extension case tied to this
+// observation, reconstructed from Flowable's own history tables (see
+// getAtrObservationHistoryEvents in flowableApi.tsx). Comments (the
+// user-typed notes below it) are a separate, complementary thing —
+// this timeline is about what the workflow itself actually did.
+function formatHistoryTimestamp(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
+function historyDotClass(outcome?: string): string {
+  if (outcome === 'REJECT') return 'bg-red-500';
+  if (outcome === 'APPROVE') return 'bg-green-500';
+  if (outcome === 'CANCEL') return 'bg-gray-400';
+  return 'bg-blue-500';
+}
+
+function historyBadgeClass(category: ObservationHistoryEvent['category'], outcome?: string): string {
+  if (outcome === 'REJECT') return 'bg-red-100 text-red-700';
+  if (outcome === 'APPROVE') return 'bg-green-100 text-green-700';
+  if (outcome === 'CANCEL') return 'bg-gray-100 text-gray-500';
+  if (category === 'extension') return 'bg-purple-100 text-purple-700';
+  if (category === 'submit') return 'bg-blue-100 text-blue-700';
+  return 'bg-gray-100 text-gray-600';
+}
+
+function ObservationHistoryTimeline({
+  events,
+  loading,
+}: {
+  events: ObservationHistoryEvent[];
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-gray-400 py-3 mb-2">
+        <Loader2Icon className="w-4 h-4 animate-spin" /> Loading workflow history…
+      </div>
+    );
+  }
+
+  if (events.length === 0) {
+    return (
+      <p className="text-sm text-gray-500 mb-6">
+        No completed steps yet — this observation hasn't moved past its first action.
+      </p>
+    );
+  }
+
+  const summary = summarizeObservationHistory(events);
+
+  return (
+    <div className="mb-8">
+      <div className="flex flex-wrap gap-2 mb-5">
+        <span className="text-xs px-2.5 py-1 rounded-full bg-blue-50 text-blue-700">
+          Submitted {summary.submittedCount}×
+        </span>
+        {summary.returnedCount > 0 && (
+          <span className="text-xs px-2.5 py-1 rounded-full bg-red-50 text-red-700">
+            Returned {summary.returnedCount}×
+          </span>
+        )}
+        {summary.extensionRequestedCount > 0 && (
+          <span className="text-xs px-2.5 py-1 rounded-full bg-purple-50 text-purple-700">
+            Extension requested {summary.extensionRequestedCount}×
+          </span>
+        )}
+        {summary.extensionApprovedCount > 0 && (
+          <span className="text-xs px-2.5 py-1 rounded-full bg-green-50 text-green-700">
+            Extension approved {summary.extensionApprovedCount}×
+          </span>
+        )}
+        {summary.extensionRejectedCount > 0 && (
+          <span className="text-xs px-2.5 py-1 rounded-full bg-red-50 text-red-700">
+            Extension rejected {summary.extensionRejectedCount}×
+          </span>
+        )}
+        {summary.isClosed && (
+          <span className="text-xs px-2.5 py-1 rounded-full bg-green-100 text-green-800 font-medium">
+            Closed
+          </span>
+        )}
+      </div>
+
+      <ol className="relative border-l border-gray-200 ml-2">
+        {events.map((e) => (
+          <li key={e.id} className="mb-6 ml-5 last:mb-0">
+            <span
+              className={`absolute -left-[7px] w-3.5 h-3.5 rounded-full ring-4 ring-white ${historyDotClass(e.outcome)}`}
+            />
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-medium text-gray-800">{e.label}</p>
+              <span className={`text-xs px-2 py-0.5 rounded-full ${historyBadgeClass(e.category, e.outcome)}`}>
+                {ATR_TASK_STEP_LABELS[e.taskDefinitionKey] || e.taskDefinitionKey}
+              </span>
+            </div>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {formatHistoryTimestamp(e.timestamp)}
+              {e.actor ? ` · ${e.actor}` : ''}
+            </p>
+            {e.comment && (
+              <p className="text-sm text-gray-600 mt-1 whitespace-pre-wrap">{e.comment}</p>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 export function ObservationTask() {
   const { taskId } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
@@ -107,12 +258,25 @@ export function ObservationTask() {
   const [vars, setVars] = useState<ProcessVariable[]>([]);
   const [comments, setComments] = useState<CommentEntry[]>([]);
   const [attachments, setAttachments] = useState<FlowableAttachment[]>([]);
+  const [historyEvents, setHistoryEvents] = useState<ObservationHistoryEvent[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
   const [unauthorized, setUnauthorized] = useState(false);
   const [activeTab, setActiveTab] = useState<TabLabel>('Action Taken');
+
+  // Success/failure toast shown for every submit / reject / extension
+  // action. Lives here (not in the individual forms) so it survives the
+  // switch to the "Task Completed" screen after onSuccess() fires.
+  const [toast, setToast] = useState<ToastState>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const load = useCallback(async () => {
     if (!taskId) return;
@@ -187,6 +351,22 @@ export function ObservationTask() {
         setComments([]);
         setAttachments([]);
       }
+
+      // Workflow history timeline — resolved from observationId alone
+      // (works for both BPMN and CMMN task views, since observationId
+      // is a variable on both). Fired off after the main load rather
+      // than awaited, so a slow history fetch never blocks the rest of
+      // the page from rendering.
+      const observationId = getVariableValue(v, 'observationId');
+      if (observationId) {
+        setHistoryLoading(true);
+        getAtrObservationHistoryEvents(observationId)
+          .then(setHistoryEvents)
+          .catch(() => setHistoryEvents([]))
+          .finally(() => setHistoryLoading(false));
+      } else {
+        setHistoryEvents([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load task');
     } finally {
@@ -209,6 +389,16 @@ export function ObservationTask() {
     setVars((prev) => {
       const next = prev.filter((v) => v.name !== 'checklistItems');
       return [...next, { name: 'checklistItems', type: 'string', value: JSON.stringify(items), scope: 'global' }];
+    });
+  };
+
+  // Same lift-up pattern as handleChecklistUpdated — keeps `vars` in
+  // sync the instant a draft is saved, so the Details tab (or a re-mount
+  // of the Action Taken form) never shows a stale draft value.
+  const handleDraftSaved = (text: string) => {
+    setVars((prev) => {
+      const next = prev.filter((v) => v.name !== 'correctiveActionDraft');
+      return [...next, { name: 'correctiveActionDraft', type: 'string', value: text, scope: 'global' }];
     });
   };
 
@@ -279,6 +469,7 @@ export function ObservationTask() {
   if (done) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center p-8">
+        <Toast toast={toast} />
         <div className="w-16 h-16 rounded-full bg-green-100 flex items-center justify-center">
           <CheckCircle2Icon className="w-8 h-8 text-green-600" />
         </div>
@@ -300,6 +491,7 @@ export function ObservationTask() {
 
   return (
     <div className="max-w-6xl mx-auto p-8">
+      <Toast toast={toast} />
       <button
         onClick={() => navigate(-1)}
         className="flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 mb-3"
@@ -371,9 +563,12 @@ export function ObservationTask() {
                     reviewComments={gv('reviewComments')}
                     checklistItems={parseChecklistItems(vars)}
                     onChecklistUpdated={handleChecklistUpdated}
+                    draftCorrectiveActionDetails={gv('correctiveActionDraft')}
+                    onDraftSaved={handleDraftSaved}
                     submitting={submitting}
                     setSubmitting={setSubmitting}
                     setError={setError}
+                    setToast={setToast}
                     onSuccess={() => setDone(true)}
                   />
                 )}
@@ -385,6 +580,7 @@ export function ObservationTask() {
                     submitting={submitting}
                     setSubmitting={setSubmitting}
                     setError={setError}
+                    setToast={setToast}
                     onSuccess={() => setDone(true)}
                   />
                 )}
@@ -400,6 +596,7 @@ export function ObservationTask() {
                     submitting={submitting}
                     setSubmitting={setSubmitting}
                     setError={setError}
+                    setToast={setToast}
                     onSuccess={() => setDone(true)}
                     decide={decideAtrCommercialExtension}
                   />
@@ -416,6 +613,7 @@ export function ObservationTask() {
                     submitting={submitting}
                     setSubmitting={setSubmitting}
                     setError={setError}
+                    setToast={setToast}
                     onSuccess={() => setDone(true)}
                     decide={decideAtrFunctionalExtension}
                   />
@@ -478,7 +676,15 @@ export function ObservationTask() {
             )}
 
             {activeTab === 'History' && (
-              <CommentThread comments={comments} onAdd={handleAddComment} disabled={submitting} />
+              <>
+                <h3 className="text-sm font-semibold text-gray-800 mb-3">Workflow history</h3>
+                <ObservationHistoryTimeline events={historyEvents} loading={historyLoading} />
+
+                <div className="border-t border-gray-100 pt-5">
+                  <h3 className="text-sm font-semibold text-gray-800 mb-3">Comments</h3>
+                  <CommentThread comments={comments} onAdd={handleAddComment} disabled={submitting} />
+                </div>
+              </>
             )}
 
             {activeTab === 'Attachments' && (() => {
@@ -489,12 +695,12 @@ export function ObservationTask() {
                 <ul className="space-y-2">
                   {visible.map((a) => (
                     <li key={a.id} className="flex items-center gap-2">
-                      <button
-                        onClick={() => downloadAttachment(task.processInstanceId, a.id, a.name)}
-                        className="text-sm text-blue-600 hover:underline"
-                      >
-                        {a.name}
-                      </button>
+                  <button
+  onClick={() => downloadAttachment(a.taskId || '', a.id, a.name)}
+  className="text-sm text-blue-600 hover:underline"
+>
+  {a.name}
+</button>
                       {a.type === 'creation' && (
                         <span className="text-xs text-gray-400">(from auditor)</span>
                       )}
@@ -569,7 +775,8 @@ function AtrAuditeeSubmitForm({
   taskId, processInstanceId, userId,
   observationDescription, targetDate, status, reviewComments,
   checklistItems, onChecklistUpdated,
-  submitting, setSubmitting, setError, onSuccess,
+  draftCorrectiveActionDetails, onDraftSaved,
+  submitting, setSubmitting, setError, setToast, onSuccess,
 }: {
   taskId: string;
   processInstanceId: string;
@@ -580,12 +787,23 @@ function AtrAuditeeSubmitForm({
   reviewComments?: string;
   checklistItems: ChecklistItem[];
   onChecklistUpdated: (items: ChecklistItem[]) => void;
+  /** Last-saved draft text for the Corrective Action Details textarea,
+   *  read off the `correctiveActionDraft` process variable — pre-fills
+   *  the field so the auditee's write-up survives navigating away or
+   *  coming back in a later session, even before they formally submit. */
+  draftCorrectiveActionDetails?: string;
+  /** Called after a successful draft save so the parent's `vars` copy
+   *  stays in sync (same lift-up pattern as onChecklistUpdated). */
+  onDraftSaved: (text: string) => void;
   submitting: boolean;
   setSubmitting: (v: boolean) => void;
   setError: (v: string) => void;
+  setToast: SetToast;
   onSuccess: () => void;
 }) {
-  const [correctiveActionDetails, setCorrectiveActionDetails] = useState('');
+  const [correctiveActionDetails, setCorrectiveActionDetails] = useState(
+    draftCorrectiveActionDetails || ''
+  );
   const [files, setFiles] = useState<File[]>([]);
   const [showExtensionModal, setShowExtensionModal] = useState(false);
   const [extensionReason, setExtensionReason] = useState('');
@@ -596,6 +814,13 @@ function AtrAuditeeSubmitForm({
   // submit) so partial progress survives a refresh or a later session.
   const [localChecklist, setLocalChecklist] = useState<ChecklistItem[]>(checklistItems);
   const [savingChecklist, setSavingChecklist] = useState(false);
+
+  // Draft-save state for the Corrective Action Details text. Unlike the
+  // checklist (which autosaves on every toggle), the textarea is saved
+  // explicitly via a "Save Draft" button — autosaving on every keystroke
+  // would hammer the Flowable API, so this stays opt-in.
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     setLocalChecklist(checklistItems);
@@ -629,6 +854,25 @@ function AtrAuditeeSubmitForm({
     return today > due;
   })();
 
+  // Persists the current Corrective Action Details text as a process
+  // variable (`correctiveActionDraft`) so it's there next time this
+  // task is opened — by this session or a later one. Deliberately NOT
+  // gated on isPastDue: a past-due auditee can't submit, but they
+  // shouldn't lose their write-up either.
+  const saveDraft = async () => {
+    setSavingDraft(true);
+    setError('');
+    try {
+      await saveProcessVariable(processInstanceId, 'correctiveActionDraft', correctiveActionDetails);
+      onDraftSaved(correctiveActionDetails);
+      setDraftSavedAt(new Date());
+    } catch (err) {
+      setError(err instanceof Error ? `Could not save draft: ${err.message}` : 'Could not save draft.');
+    } finally {
+      setSavingDraft(false);
+    }
+  };
+
   const submitForReview = async () => {
     setSubmitting(true);
     setError('');
@@ -643,9 +887,15 @@ function AtrAuditeeSubmitForm({
         action: 'SUBMIT',
         correctiveActionDetails,
       });
+      // Clear the draft now that it's been formally submitted, so a
+      // stale draft doesn't linger if this observation ever loops back
+      // to auditeeSubmitAction (e.g. after a REJECT).
+      await saveProcessVariable(processInstanceId, 'correctiveActionDraft', '').catch(() => {});
+      setToast({ type: 'success', message: 'Submitted for review successfully.' });
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Submit failed');
+      setToast({ type: 'error', message: 'Submit failed. Please try again.' });
     } finally {
       setSubmitting(false);
     }
@@ -657,9 +907,11 @@ function AtrAuditeeSubmitForm({
     setError('');
     try {
       await submitAtrAuditeeAction(taskId, { action: 'CANCEL' });
+      setToast({ type: 'success', message: 'Observation cancelled.' });
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Cancel failed');
+      setToast({ type: 'error', message: 'Cancel failed. Please try again.' });
     } finally {
       setSubmitting(false);
     }
@@ -675,9 +927,11 @@ function AtrAuditeeSubmitForm({
         requestedExtensionDate,
       }, processInstanceId);
       setShowExtensionModal(false);
+      setToast({ type: 'success', message: 'Extension request submitted successfully.' });
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Extension request failed');
+      setToast({ type: 'error', message: 'Extension request failed. Please try again.' });
     } finally {
       setSubmitting(false);
     }
@@ -726,6 +980,15 @@ function AtrAuditeeSubmitForm({
         <textarea rows={5} className={inputCls} value={correctiveActionDetails}
           onChange={(e) => setCorrectiveActionDetails(e.target.value)}
           placeholder="Describe the corrective action taken..." disabled={isPastDue} />
+        <p className="text-xs text-gray-400 mt-1">
+          {savingDraft
+            ? 'Saving draft…'
+            : draftSavedAt
+              ? `Draft saved at ${draftSavedAt.toLocaleTimeString()} — visible next time you open this task.`
+              : draftCorrectiveActionDetails
+                ? 'Showing your last saved draft.'
+                : "Uploaded files aren't saved in drafts — only text and checklist progress."}
+        </p>
       </Field>
 
       <div className="mb-5">
@@ -739,6 +1002,14 @@ function AtrAuditeeSubmitForm({
           className="flex-1 px-5 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
         >
           {submitting ? 'Submitting…' : 'Submit for Review'}
+        </button>
+        <button
+          type="button"
+          onClick={saveDraft}
+          disabled={savingDraft || submitting || !correctiveActionDetails.trim()}
+          className="px-5 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+        >
+          {savingDraft ? 'Saving…' : 'Save Draft'}
         </button>
         <button
           type="button"
@@ -797,13 +1068,14 @@ function AtrAuditeeSubmitForm({
 
 // ── auditorReviewEvidence: APPROVE / REJECT / INVALID / BLOCKED ──
 function AtrAuditorReviewForm({
-  taskId, processInstanceId, submitting, setSubmitting, setError, onSuccess,
+  taskId, processInstanceId, submitting, setSubmitting, setError, setToast, onSuccess,
 }: {
   taskId: string;
   processInstanceId: string;
   submitting: boolean;
   setSubmitting: (v: boolean) => void;
   setError: (v: string) => void;
+  setToast: SetToast;
   onSuccess: () => void;
 }) {
   const [reviewComments, setReviewComments] = useState('');
@@ -817,9 +1089,14 @@ function AtrAuditorReviewForm({
     setError('');
     try {
       await submitAtrAuditorReview(taskId, { reviewDecision, reviewComments }, processInstanceId);
+      setToast({
+        type: 'success',
+        message: reviewDecision === 'APPROVE' ? 'Approved and closed successfully.' : 'Returned to auditee successfully.',
+      });
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Review failed');
+      setToast({ type: 'error', message: 'Review submission failed. Please try again.' });
     } finally {
       setSubmitting(false);
     }
@@ -857,7 +1134,7 @@ function AtrAuditorReviewForm({
 // ── commercialHeadApprovalTask / functionalHeadApprovalTask (CMMN) ──
 function AtrExtensionDecisionForm({
   taskId, caseInstanceId, observationId, title, extensionReason, requestedExtensionDate,
-  submitting, setSubmitting, setError, onSuccess, decide,
+  submitting, setSubmitting, setError, setToast, onSuccess, decide,
 }: {
   taskId: string;
   caseInstanceId: string;
@@ -868,6 +1145,7 @@ function AtrExtensionDecisionForm({
   submitting: boolean;
   setSubmitting: (v: boolean) => void;
   setError: (v: string) => void;
+  setToast: SetToast;
   onSuccess: () => void;
   decide: (
     taskId: string,
@@ -888,9 +1166,14 @@ function AtrExtensionDecisionForm({
     setError('');
     try {
       await decide(taskId, decision, caseInstanceId, observationId, comment);
+      setToast({
+        type: 'success',
+        message: decision === 'APPROVE' ? 'Extension approved successfully.' : 'Extension rejected successfully.',
+      });
       onSuccess();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Decision failed');
+      setToast({ type: 'error', message: 'Decision failed. Please try again.' });
     } finally {
       setSubmitting(false);
     }

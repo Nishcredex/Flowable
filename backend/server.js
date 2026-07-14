@@ -345,6 +345,47 @@ app.get(
 );
 
 // ─────────────────────────────────────────────────────────────
+// Route 4 — TASK ATTACHMENT CONTENT (binary passthrough)
+//
+// Must be registered BEFORE the generic JSON proxy. That proxy uses
+// axios with its default responseType ('json'), which corrupts binary
+// bodies (JPEG/PDF bytes) by trying to parse/re-stringify them through
+// res.json() — the file "downloads" but is no longer valid content.
+// This route fetches the raw bytes with responseType: 'arraybuffer'
+// and streams them straight through with the original content-type.
+// ─────────────────────────────────────────────────────────────
+app.get(
+  '/flowable-api/runtime/tasks/:taskId/attachments/:attachmentId/content',
+  async (req, res) => {
+    const { taskId, attachmentId } = req.params;
+    const targetUrl = `${FLOWABLE_BASE}/runtime/tasks/${taskId}/attachments/${attachmentId}/content`;
+
+    try {
+      const upstream = await axios.get(targetUrl, {
+        headers: { Authorization: FLOWABLE_AUTH },
+        responseType: 'arraybuffer',
+        timeout: 30000,
+        validateStatus: () => true, // let us forward Flowable's real status instead of throwing
+      });
+
+      if (upstream.status >= 400) {
+        return res.status(upstream.status).end();
+      }
+
+      const contentType = upstream.headers['content-type'] || 'application/octet-stream';
+      res.set('Content-Type', contentType);
+      const disposition = upstream.headers['content-disposition'];
+      if (disposition) res.set('Content-Disposition', disposition);
+      res.set('Cache-Control', 'no-store');
+
+      return res.send(Buffer.from(upstream.data));
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────
 // Route 3 — TASK ATTACHMENT UPLOAD (multipart passthrough)
 //
 // Must be registered BEFORE the generic JSON proxy below — Express

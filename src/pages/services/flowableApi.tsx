@@ -1,5 +1,3 @@
-
-
 // const FLOWABLE_BASE = 'http://localhost:8080/flowable-ui/process-api';
 const FLOWABLE_BASE = import.meta.env.VITE_FLOWABLE_API_BASE ?? 'http://localhost:3000/flowable-api';
 // NOTE: shipping Basic Auth credentials in frontend code (even via env
@@ -478,7 +476,7 @@ export async function getProcessInstanceComments(
   processInstanceId: string
 ): Promise<CommentEntry[]> {
   const comments = await flowableFetch<FlowableComment[]>(
-    `/runtime/process-instances/${processInstanceId}/comments`
+    `/history/historic-process-instances/${processInstanceId}/comments`
   );
   return (comments || [])
     .map(decodeComment)
@@ -490,7 +488,7 @@ export async function addProcessInstanceComment(
   entry: { authorId: string; authorName?: string; role?: string; text: string }
 ): Promise<CommentEntry[]> {
   await flowableFetch<FlowableComment>(
-    `/runtime/process-instances/${processInstanceId}/comments`,
+    `/history/historic-process-instances/${processInstanceId}/comments`,
     {
       method: 'POST',
       body: JSON.stringify({
@@ -503,12 +501,8 @@ export async function addProcessInstanceComment(
       }),
     }
   );
-  // Re-fetch rather than trust the POST response, so the returned list
-  // is always Flowable's actual current state (same pattern addComment
-  // used to follow against the Node route).
   return getProcessInstanceComments(processInstanceId);
 }
-
 // ─────────────────────────────────────────────────────────────
 // ATTACHMENTS — native Flowable attachment resource. Uploads are
 // task-scoped (that's the only Flowable create-attachment endpoint),
@@ -532,13 +526,7 @@ export interface FlowableAttachment {
   userId: string | null;
 }
 
-export async function getProcessInstanceAttachments(
-  processInstanceId: string
-): Promise<FlowableAttachment[]> {
-  return flowableFetch<FlowableAttachment[]>(
-    `/runtime/process-instances/${processInstanceId}/attachments`
-  );
-}
+
 
 /** Flowable's attachment endpoint takes exactly one file per multipart
  *  request, so multiple files means multiple sequential calls. */
@@ -584,27 +572,7 @@ export async function uploadAttachments(
  *  Basic Auth on every request and Node here is only a passthrough proxy
  *  (no cookie/session auth), so a bare link click reaches Flowable with
  *  no credentials and gets a 401. Fetch authenticated, then save the blob. */
-export async function downloadAttachment(
-  processInstanceId: string,
-  attachmentId: string,
-  fileName: string
-): Promise<void> {
-  const res = await fetch(
-    `${FLOWABLE_BASE}/runtime/process-instances/${processInstanceId}/attachments/${attachmentId}/content`,
-    { headers: { Authorization: HEADERS.Authorization } }
-  );
-  if (!res.ok) throw new Error(`Failed to download attachment [${res.status}]`);
 
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
 // ─────────────────────────────────────────────────────────────
 // 8. GET DASHBOARD STATS
 //    Called from: Dashboard.tsx
@@ -1699,24 +1667,6 @@ export async function createOrgSettings(
   });
 }
 
-// UPDATE org settings (update all variables on existing instance)
-// export async function updateOrgSettings(
-//   processInstanceId: string,
-//   payload: OrgSettingsPayload
-// ): Promise<void> {
-//   const fields = ['companyName', 'industry', 'address', 'gstin', 'cin', 'fiscalYear', 'timezone'] as const;
-//   await Promise.all(
-//     fields.map(field =>
-//       flowableFetch<void>(
-//         `/runtime/process-instances/${processInstanceId}/variables/${field}`,
-//         {
-//           method: 'PUT',
-//           body: JSON.stringify({ name: field, value: payload[field], type: 'string' }),
-//         }
-//       )
-//     )
-//   );
-// }
 export async function updateOrgSettings(
   processInstanceId: string,
   payload: OrgSettingsPayload
@@ -1743,46 +1693,56 @@ export async function updateOrgSettings(
 //   name: string,
 //   value: string
 // ): Promise<void> {
-//   await flowableFetch<void>(
-//     `/runtime/process-instances/${processInstanceId}/variables/${name}`,
-//     {
-//       method: 'PUT',
-//       body: JSON.stringify({ name, value, type: 'string' }),
+//   const variableBody = { name, value, type: 'string' };
+
+//   try {
+//     // Try PUT first — updates an existing variable
+//     await flowableFetch<void>(
+//       `/runtime/process-instances/${processInstanceId}/variables/${name}`,
+//       {
+//         method: 'PUT',
+//         body: JSON.stringify(variableBody),
+//       }
+//     );
+//   } catch (err) {
+//     // Variable doesn't exist yet → create it via POST (expects an array)
+//     if (err instanceof Error && err.message.includes('[404]')) {
+//       await flowableFetch<void>(
+//         `/runtime/process-instances/${processInstanceId}/variables`,
+//         {
+//           method: 'POST',
+//           body: JSON.stringify([variableBody]),  // ← wrap in array
+//         }
+//       );
+//     } else {
+//       throw err;
 //     }
-//   );
+//   }
 // }
+
+
 export async function saveProcessVariable(
   processInstanceId: string,
   name: string,
   value: string
 ): Promise<void> {
   const variableBody = { name, value, type: 'string' };
-
   try {
-    // Try PUT first — updates an existing variable
     await flowableFetch<void>(
       `/runtime/process-instances/${processInstanceId}/variables/${name}`,
-      {
-        method: 'PUT',
-        body: JSON.stringify(variableBody),
-      }
+      { method: 'PUT', body: JSON.stringify(variableBody) }
     );
   } catch (err) {
-    // Variable doesn't exist yet → create it via POST (expects an array)
     if (err instanceof Error && err.message.includes('[404]')) {
       await flowableFetch<void>(
         `/runtime/process-instances/${processInstanceId}/variables`,
-        {
-          method: 'POST',
-          body: JSON.stringify([variableBody]),  // ← wrap in array
-        }
+        { method: 'POST', body: JSON.stringify([variableBody]) }  // ← creates it
       );
     } else {
       throw err;
     }
   }
 }
-
 // ─────────────────────────────────────────────────────────────
 // USER PREFERENCES (Notifications + Regional + Appearance)
 // Stored as variables on a per-user process instance
@@ -1825,101 +1785,66 @@ export interface InboxNotification {
 
 /** GET all notifications for a user (newest first). Creates nothing —
  *  returns [] if the user has no notificationsWorkflow instance yet. */
-export async function getInboxNotifications(userId: string): Promise<InboxNotification[]> {
-  const data = await flowableFetch<{ data: ProcessInstance[] }>(
-    `/runtime/process-instances?processDefinitionKey=notificationsWorkflow&size=100`
-  );
-  for (const inst of data.data || []) {
-    const vars = await getProcessVariables(inst.id);
-    const owner = getVariableValue(vars, 'userId');
-    if (owner === userId) {
-      const raw = getVariableValue(vars, 'items');
-      try {
-        const items: InboxNotification[] = raw ? JSON.parse(raw) : [];
-        return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      } catch {
-        return [];
-      }
-    }
+async function getUserInfoKeys(userId: string): Promise<string[]> {
+  try {
+    const keys = await flowableFetch<{ data?: { key: string }[] } | { key: string }[]>(
+      `/identity/users/${encodeURIComponent(userId)}/info`
+    );
+    const list = Array.isArray(keys) ? keys : keys.data || [];
+    return list.map((k) => k.key);
+  } catch {
+    return [];
   }
-  return [];
 }
 
-/** Finds (or creates) the user's notificationsWorkflow instance and
- *  appends one entry. Call this from sendNotification() below instead
- *  of / in addition to console.info, so notifications actually persist. */
+export async function getInboxNotifications(userId: string): Promise<InboxNotification[]> {
+  try {
+    const keys = await getUserInfoKeys(userId);
+    if (!keys.includes('notifications')) return [];
+    const res = await flowableFetch<{ key: string; value: string }>(
+      `/identity/users/${encodeURIComponent(userId)}/info/notifications`
+    );
+    const items: InboxNotification[] = res.value ? JSON.parse(res.value) : [];
+    return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch {
+    return [];
+  }
+}
+
 export default async function pushInboxNotification(
   userId: string,
   entry: Omit<InboxNotification, 'id' | 'read' | 'createdAt'>
 ): Promise<void> {
-  const data = await flowableFetch<{ data: ProcessInstance[] }>(
-    `/runtime/process-instances?processDefinitionKey=notificationsWorkflow&size=100`
-  );
-  let instanceId: string | null = null;
-  let existing: InboxNotification[] = [];
-
-  for (const inst of data.data || []) {
-    const vars = await getProcessVariables(inst.id);
-    if (getVariableValue(vars, 'userId') === userId) {
-      instanceId = inst.id;
-      const raw = getVariableValue(vars, 'items');
-      try { existing = raw ? JSON.parse(raw) : []; } catch { existing = []; }
-      break;
-    }
-  }
-
+  const existing = await getInboxNotifications(userId).catch(() => []);
   const notification: InboxNotification = {
     id: `notif-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     read: false,
     createdAt: new Date().toISOString(),
     ...entry,
   };
-  const updated = [...existing, notification];
-
-  if (instanceId) {
-    await saveProcessVariable(instanceId, 'items', JSON.stringify(updated));
-  } else {
-    const inst = await flowableFetch<ProcessInstance>('/runtime/process-instances', {
-      method: 'POST',
-      body: JSON.stringify({
-        processDefinitionKey: 'notificationsWorkflow',
-        variables: [
-          { name: 'userId', value: userId, type: 'string' },
-          { name: 'items', value: JSON.stringify(updated), type: 'string' },
-        ],
-      }),
+  const value = JSON.stringify([...existing, notification]);
+  const uid = encodeURIComponent(userId);
+  try {
+    await flowableFetch<void>(`/identity/users/${uid}/info/notifications`, {
+      method: 'PUT',
+      body: JSON.stringify({ value }),
     });
-    void inst;
+  } catch {
+    await flowableFetch<void>(`/identity/users/${uid}/info`, {
+      method: 'POST',
+      body: JSON.stringify({ key: 'notifications', value }),
+    });
   }
 }
 
-/** Marks one notification read (called when the user opens the inbox item). */
 export async function markInboxNotificationRead(userId: string, notificationId: string): Promise<void> {
-  const data = await flowableFetch<{ data: ProcessInstance[] }>(
-    `/runtime/process-instances?processDefinitionKey=notificationsWorkflow&size=100`
-  );
-  for (const inst of data.data || []) {
-    const vars = await getProcessVariables(inst.id);
-    if (getVariableValue(vars, 'userId') === userId) {
-      const raw = getVariableValue(vars, 'items');
-      let items: InboxNotification[] = [];
-      try { items = raw ? JSON.parse(raw) : []; } catch { items = []; }
-      const updated = items.map((n) => (n.id === notificationId ? { ...n, read: true } : n));
-      await saveProcessVariable(inst.id, 'items', JSON.stringify(updated));
-      return;
-    }
-  }
+  const items = await getInboxNotifications(userId).catch(() => []);
+  const updated = items.map((n) => (n.id === notificationId ? { ...n, read: true } : n));
+  await flowableFetch<void>(`/identity/users/${encodeURIComponent(userId)}/info/notifications`, {
+    method: 'PUT',
+    body: JSON.stringify({ value: JSON.stringify(updated) }),
+  }).catch(() => {});
 }
-
-// ─────────────────────────────────────────────────────────────
-// REPLACE the existing sendNotification() stub with this version —
-// same signature, same call sites (completeAuditeeNotificationJob,
-// completeClosureNotificationJob, the CMMN automation handlers), just
-// now it actually writes to the recipient's inbox instead of only
-// console.info. `payload.auditeeId` (or another user id you pass in)
-// becomes the inbox owner.
-// ─────────────────────────────────────────────────────────────
-
 async function sendNotification(kind: string, payload: Record<string, string>): Promise<void> {
   // eslint-disable-next-line no-console
   console.info(`[notification:${kind}]`, payload);
@@ -2006,33 +1931,6 @@ export async function createUserPreferences(
   });
 }
 
-// UPDATE all preference variables on an existing instance
-// export async function updateUserPreferences(
-//   processInstanceId: string,
-//   payload: UserPreferencesPayload
-// ): Promise<void> {
-//   const entries: Array<[string, string]> = [
-//     ['userId',        payload.userId],
-//     ['emailNotif',    String(payload.emailNotif)],
-//     ['pushNotif',     String(payload.pushNotif)],
-//     ['reminderNotif', String(payload.reminderNotif)],
-//     ['language',      payload.language],
-//     ['currency',      payload.currency],
-//     ['dateFormat',    payload.dateFormat],
-//     ['theme',         payload.theme],
-//   ];
-//   await Promise.all(
-//     entries.map(([name, value]) =>
-//       flowableFetch<void>(
-//         `/runtime/process-instances/${processInstanceId}/variables/${name}`,
-//         {
-//           method: 'PUT',
-//           body: JSON.stringify({ name, value, type: 'string' }),
-//         }
-//       )
-//     )
-//   );
-// }
 // AFTER — runs PUTs one at a time
 export async function updateUserPreferences(
   processInstanceId: string,
@@ -2256,21 +2154,6 @@ export async function getTaskVariables(
 // ─────────────────────────────────────────────────────────────
 // LOGIN
 //    Called from: LoginPage.tsx
-//
-//    Flowable's identity REST API has no dedicated "login" endpoint,
-//    and every other function above authenticates as the fixed
-//    admin:test service account (see HEADERS/CREDENTIALS at the top
-//    of this file) — so flowableFetch() can't be used to check a
-//    *different* user's password. Real login here is 3 steps:
-//      1. Look up the user by email using the service account
-//         (reuses getAllUsers(), already defined above).
-//      2. Re-request that same user, but with Basic Auth built from
-//         the password they just typed. Flowable returns 200 if it's
-//         correct, 401/403 if it isn't — that response IS the check.
-//      3. Read role/department off their profile info entry (reuses
-//         getUserProfile(), already defined above) and map the
-//         free-text role from the Invite User form (Users.tsx) onto
-//         this app's 'admin' | 'auditor' split.
 // ─────────────────────────────────────────────────────────────
 
 export class FlowableLoginError extends Error {}
@@ -2302,29 +2185,6 @@ async function verifyPassword(userId: string, password: string): Promise<void> {
   }
 }
 
-/** Only the 'Administrator' option from the Invite User role dropdown
- *  counts as an app admin — everything else (Lead Auditor, Plant
- *  Manager, Safety Officer, etc.) is treated as 'auditor'. Adjust
- *  here if more roles should map to 'admin'.
- *
- *  BOOTSTRAP FALLBACK: Flowable's own seed identity user (id 'admin')
- *  is never created through this app's Invite User form, so it has no
- *  companion profile entry — getUserProfile() returns null for it and,
- *  without this fallback, mapRole(undefined) would send it to 'auditor'
- *  forever, permanently locking everyone out of Create Audit and
- *  Administration (nobody could even open Users & Roles to fix it,
- *  since that page itself requires admin). Treating the literal 'admin'
- *  userId as an admin, regardless of profile state, is the standard
- *  break-glass account pattern and guarantees at least one way in. */
-/** Flowable group ids are free-text, admin-created strings — per
- *  Users > Groups in the Flowable app they're literally "Auditee",
- *  "Auditor", "Commercial head Group", "Functional head group" (mixed
- *  case, sometimes with a trailing "Group"/"group"). Comparing them
- *  case-sensitively against camelCase constants like 'commercialHead'
- *  never matches, so every group-based check below silently failed and
- *  fell through to the 'auditor' default — the bug that let auditees
- *  land in the app as full auditors. Normalize both sides (lowercase,
- *  strip everything but letters) before comparing. */
 function normalizeGroupToken(s: string): string {
   return s.toLowerCase().replace(/[^a-z]/g, '');
 }
@@ -2345,11 +2205,6 @@ function mapRole(
   if (inGroup('auditee') || profileRole === 'Auditee') return 'auditee';
   if (inGroup('auditor') || profileRole === 'Lead Auditor' || profileRole === 'Auditor') return 'auditor';
 
-  // No recognizable group and no profile-role text — don't silently
-  // grant auditor access. Surface it as a real login error instead of
-  // guessing a role, so a misconfigured account fails loudly and gets
-  // fixed in Flowable rather than quietly running with the wrong
-  // permissions.
   throw new FlowableLoginError(
     'Your account is not assigned to a recognized role group in Flowable (Auditee, Auditor, Commercial head Group, or Functional head group). Contact your administrator.'
   );
@@ -2379,11 +2234,6 @@ export async function loginWithFlowable(email: string, password: string): Promis
 
   const role = mapRole(profile?.role, match.id, groups);
 
-  // Self-heal: if we just granted admin via the bootstrap fallback (no
-  // profile, or a profile whose role text isn't 'Administrator' yet),
-  // write one now so Users & Roles shows this account correctly too,
-  // instead of it looking like a role-less user forever. Best-effort —
-  // login should still succeed even if this write fails.
   if (role === 'admin' && profile?.role !== 'Administrator') {
     try {
       await saveUserProfile({
@@ -2411,41 +2261,8 @@ export async function loginWithFlowable(email: string, password: string): Promis
 
 // ═════════════════════════════════════════════════════════════
 // ATR WORKFLOW AUTOMATION
-//
-// The BPMN/CMMN XML deliberately has NO Java backend — every step that
-// isn't a plain human task (external-worker jobs, CMMN case start, the
-// signal that resumes the parked BPMN process, plain "system" CMMN
-// tasks) has to be driven by this React app itself. This section is
-// that automation layer. See ATR_OBSERVATION_LIFECYCLE_bpmn20.xml and
-// ATR_EXTENSION_APPROVAL_cmmn.xml for the authoritative REST call
-// sequence each piece here follows.
-//
-// NOTIFICATIONS ARE STUBBED FOR NOW: sendNotification() below just logs
-// / returns immediately instead of calling a real email/SMS provider.
-// Swap its body out later — every call site here already awaits it, so
-// wiring in a real integration won't require touching the workflow
-// logic again.
 // ═════════════════════════════════════════════════════════════
 
-/** Placeholder notification hook. Replace with a real email/SMS/in-app
- *  call later; kept as an explicit named function (rather than inlining
- *  a no-op at each call site) so there's exactly one place to upgrade. */
-// async function sendNotification(kind: string, payload: Record<string, string>): Promise<void> {
-//   // eslint-disable-next-line no-console
-//   console.info(`[notification:${kind}]`, payload);
-// }
-
-// ── Notification "jobs" (BPMN sendAuditeeNotification / sendClosureNotification) ──
-// These used to be flowable:type="external-worker" service tasks requiring
-// React to poll POST /runtime/jobs/acquire. That endpoint 404s on this
-// deployment — it only exposes the standard management/jobs REST surface
-// (see management/jobs docs), not Flowable's separate External Worker
-// Task API. Since the BPMN steps are now plain scriptTasks that complete
-// themselves automatically (see ATR_OBSERVATION_LIFECYCLE_bpmn20.xml),
-// there's nothing left to poll or complete here — these just fire the
-// notification stub directly from the UI action that triggers them.
-
-/** Call right after starting the process (startAtrObservationProcess). */
 export async function completeAuditeeNotificationJob(
   _processInstanceId: string,
   observationId: string,
@@ -2455,7 +2272,6 @@ export async function completeAuditeeNotificationJob(
   return true;
 }
 
-/** Call right after the auditor approves (reviewDecision=APPROVE). */
 export async function completeClosureNotificationJob(
   _processInstanceId: string,
   observationId: string,
@@ -2465,10 +2281,6 @@ export async function completeClosureNotificationJob(
   return true;
 }
 
-// ── CMMN case start (extension branch) ──────────────────────────────
-// Per the XML: "NO JAVA LISTENER starts the CMMN case anymore — React
-// must start it itself, right after it completes auditeeSubmitAction
-// with action=EXTENSION."
 export interface AtrExtensionCaseStartPayload {
   observationId:           string;
   auditeeId:                string;
@@ -2485,15 +2297,6 @@ export async function startAtrExtensionCase(
     .filter(([, v]) => v !== undefined && v !== '')
     .map(([name, value]) => ({ name, value: value as string, type: 'string' as const }));
 
-  // ATR_EXTENSION_APPROVAL_cmmn.xml's sentries reference commercialDecision
-  // and functionalDecision (e.g. ${commercialDecision == 'REJECT'}) before
-  // either approval task has ever run. Flowable's autoComplete="true" on
-  // casePlanModel evaluates those sentry conditions at case-start time, and
-  // if the variable key is entirely absent (not just empty) from the case
-  // instance, the expression resolver throws "Unknown property used in
-  // expression" instead of just evaluating to false. Seeding both as null
-  // here (never filtered out like the real fields above) keeps the keys
-  // present so the comparison is safe until the real decision is set.
   variables.push(
     { name: 'commercialDecision', value: null as unknown as string, type: 'string' },
     { name: 'functionalDecision', value: null as unknown as string, type: 'string' },
@@ -2503,17 +2306,12 @@ export async function startAtrExtensionCase(
     method: 'POST',
     body: JSON.stringify({
       caseDefinitionKey: 'ATR_EXTENSION_APPROVAL',
-      // Same businessKey as the BPMN process (observationId) so the two
-      // can be correlated back to each other later.
       businessKey: payload.observationId,
       variables,
     }),
   });
 }
 
-// ── Signal the parked BPMN process back to life ─────────────────────
-// Per the XML: find the waiting execution at waitForExtensionResult on
-// the BPMN process sharing this observation's businessKey, then signal it.
 async function findExecutionByActivity(
   processInstanceId: string,
   activityId: string
@@ -2531,9 +2329,6 @@ async function findAtrProcessInstanceIdByObservationId(observationId: string): P
   return res.data?.[0]?.id ?? null;
 }
 
-/** Resumes ATR_OBSERVATION_LIFECYCLE past waitForExtensionResult.
- *  Called from advanceExtensionCase() once the CMMN case reaches
- *  signalBpmnApprovedTask / signalBpmnRejectedTask. */
 export async function signalExtensionCompleted(
   observationId: string,
   approved: boolean
@@ -2559,9 +2354,6 @@ export async function signalExtensionCompleted(
   });
 }
 
-/** Resumes ATR_OBSERVATION_LIFECYCLE past waitUntilUnblocked (the
- *  BLOCKED review-decision branch). Call once whatever was blocking the
- *  observation is actually resolved. */
 export async function unblockAtrObservation(observationId: string): Promise<void> {
   const processInstanceId = await findAtrProcessInstanceIdByObservationId(observationId);
   if (!processInstanceId) {
@@ -2574,13 +2366,6 @@ export async function unblockAtrObservation(observationId: string): Promise<void
   await flowableFetch<void>(`/runtime/executions/${executionId}/trigger`, { method: 'POST' });
 }
 
-// ── CMMN case automation (the plain "system" tasks between the two
-//    human approvals and the end of the case) ───────────────────────
-// updateTargetDateTask / sendNotificationsTask / signalBpmnApprovedTask /
-// signalBpmnRejectedTask are all plain isBlocking="true" CMMN tasks with
-// no assignee — React completes them with the same call pattern as any
-// human task, it just has to notice they've become available and act
-// immediately instead of waiting for a person to click a button.
 const ATR_CASE_AUTOMATION_HANDLERS: Record<
   string,
   (caseInstanceId: string, observationId: string) => Promise<Record<string, string> | void>
@@ -2593,10 +2378,6 @@ const ATR_CASE_AUTOMATION_HANDLERS: Record<
     const requestedExtensionDate = String(
       list.find((v) => v.name === 'requestedExtensionDate')?.value ?? ''
     );
-    // Per the CMMN doc: complete with targetDate = requestedExtensionDate.
-    // The BPMN process's own updateTargetDate script task (which runs
-    // right after the signal below resumes it) mirrors this onto its own
-    // targetDate variable — this call is what the CMMN side expects.
     return { targetDate: requestedExtensionDate };
   },
   sendNotificationsTask: async (_caseInstanceId, observationId) => {
@@ -2610,13 +2391,6 @@ const ATR_CASE_AUTOMATION_HANDLERS: Record<
   },
 };
 
-/** Call after starting the case AND after each approval decision
- *  (commercial or functional). Auto-completes every "system" task that
- *  has become available, stopping as soon as it hits a task with no
- *  automation handler (i.e. the next human approval task, or nothing
- *  left because the case just finished/exited). Safe to call
- *  speculatively — if nothing automatable is available yet it's a
- *  single no-op query. */
 export async function advanceExtensionCase(
   caseInstanceId: string,
   observationId: string
@@ -2633,17 +2407,10 @@ export async function advanceExtensionCase(
     const resultVars = (await handler(caseInstanceId, observationId)) || {};
     await completeAtrCaseTask(nextTask.id, resultVars);
   }
-  // 10 iterations is more than this case can ever need (4 automation
-  // tasks max on either branch) — bailing out here means something is
-  // looping unexpectedly rather than silently hanging the UI.
 }
 
 // ─────────────────────────────────────────────────────────────
 // CHECKLIST ITEMS (auditor-authored sub-observations)
-// Stored as a JSON array process variable "checklistItems" on the
-// ATR_OBSERVATION_LIFECYCLE instance — no separate Flowable tasks.
-// Auditor adds/edits items at creation time (CreateAtrObservation.tsx);
-// auditee ticks them off in the Action Taken tab (ObservationTask.tsx).
 // ─────────────────────────────────────────────────────────────
 
 export interface ChecklistItem {
@@ -2672,11 +2439,6 @@ export async function saveChecklistItems(
 
 // ─────────────────────────────────────────────────────────────
 // ATTACHMENT VISIBILITY
-// Creation-time files (auditor, uploaded when the observation is
-// recorded) are tagged type='creation' and are visible ONLY to the
-// auditee. Evidence files (auditee, uploaded at submission) are tagged
-// type='evidence' and are visible to auditor + commercial head +
-// functional head — never back to another auditee. Admin sees all.
 // ─────────────────────────────────────────────────────────────
 
 export function filterAttachmentsForViewer(
@@ -2689,9 +2451,6 @@ export function filterAttachmentsForViewer(
   return attachments.filter((a) => a.type !== 'creation');
 }
 
-/** Same one-file-per-request upload as uploadOneAttachment, but tags the
- *  Flowable attachment `type` field so filterAttachmentsForViewer() can
- *  tell creation-time files apart from evidence files. */
 async function uploadOneAttachmentTyped(
   taskId: string,
   file: File,
@@ -2729,13 +2488,6 @@ export async function uploadAttachmentsTyped(
   return results;
 }
 
-/** Convenience wrapper for CreateAtrObservation.tsx — uploads the
- *  auditor's creation-time files against the observation's first task
- *  (auditeeSubmitAction), which already exists the instant the process
- *  starts. Flowable's attachment endpoint is task-scoped only — there's
- *  no process-instance-level upload — so this has to piggyback on that
- *  first task the same way evidence uploads piggyback on whichever task
- *  is currently open. */
 export async function uploadCreationAttachments(
   processInstanceId: string,
   files: File[],
@@ -2750,4 +2502,323 @@ export async function uploadCreationAttachments(
     );
   }
   return uploadAttachmentsTyped(firstTask.id, files, uploadedBy, 'creation');
+}
+
+
+// ─────────────────────────────────────────────────────────────
+// OBSERVATION LIFECYCLE HISTORY
+// ─────────────────────────────────────────────────────────────
+
+export interface ObservationHistoryEvent {
+  id: string;
+  taskDefinitionKey: string;
+  label: string;              // human label, e.g. "Submitted for review"
+  actor: string | null;       // assignee who completed the step
+  timestamp: string;          // endTime of the historic task
+  outcome?: string;           // action / reviewDecision / commercialDecision / functionalDecision
+  comment?: string;           // correctiveActionDetails / reviewComments / extensionReason / decision comment
+  category: 'submit' | 'review' | 'extension' | 'system';
+}
+
+/** Reads the historic-detail audit trail (type=VariableUpdate) for one
+ *  finished task.
+ *
+ *  PRIMARY: query by taskId. This works when Flowable stamps TASK_ID_ on
+ *  the ACT_HI_DETAIL rows created by completeTask(taskId, { action, ... }).
+ *
+ *  FALLBACK: on some Flowable deployments, variables set via
+ *  completeTask()'s payload are recorded as process/case-scoped variable
+ *  updates rather than task-scoped ones — the historic-detail rows never
+ *  get TASK_ID_ stamped, so the taskId-scoped query legitimately returns
+ *  nothing even though the data exists. When that happens (and a
+ *  `correlate` context was passed in), fall back to querying variable
+ *  updates for the whole process/case instance and keep only the ones
+ *  whose timestamp lands within a few seconds of this task's endTime —
+ *  completeTask() writes its variables at the moment the task finishes,
+ *  so this window reliably isolates just this task's own update without
+ *  picking up updates from a different task instance earlier/later in
+ *  the same process. */
+async function getHistoricDetailForTask(
+  taskId: string,
+  cmmn: boolean,
+  correlate?: { instanceId: string; endTime: string }
+): Promise<Record<string, string>> {
+  // Primary: task-scoped lookup
+  try {
+    const data = cmmn
+      ? await cmmnFetch<{ data: any[] } | any[]>(`/cmmn-history/historic-detail?taskId=${taskId}&size=100`)
+      : await flowableFetch<{ data: any[] } | any[]>(`/history/historic-detail?taskId=${taskId}&size=100`);
+    const list = Array.isArray(data) ? data : (data as any).data || [];
+    const out: Record<string, string> = {};
+    for (const d of list) {
+      if (d.variableName) out[d.variableName] = String(d.value ?? '');
+    }
+    if (Object.keys(out).length > 0) return out;
+  } catch {
+    // fall through to the correlate-based fallback below
+  }
+
+  // Fallback: some deployments don't stamp taskId on task-completion
+  // variable updates (they're process/case-scoped, not task-local).
+  // Correlate by matching update timestamps to this task's endTime.
+  if (!correlate) return {};
+  try {
+    const data = cmmn
+      ? await cmmnFetch<{ data: any[] } | any[]>(
+          `/cmmn-history/historic-detail?caseInstanceId=${correlate.instanceId}&size=200`
+        )
+      : await flowableFetch<{ data: any[] } | any[]>(
+          `/history/historic-detail?processInstanceId=${correlate.instanceId}&size=200`
+        );
+    const list = Array.isArray(data) ? data : (data as any).data || [];
+    const endMs = new Date(correlate.endTime).getTime();
+    const out: Record<string, string> = {};
+    for (const d of list) {
+      if (!d.variableName || !d.time) continue;
+      const t = new Date(d.time).getTime();
+      // completeTask's variables are written right at task completion —
+      // keep updates within a few seconds of this task's endTime.
+      if (t <= endMs + 2000 && t >= endMs - 5000) out[d.variableName] = String(d.value ?? '');
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function findAtrProcessInstanceIdAnyState(observationId: string): Promise<string | null> {
+  const runtime = await flowableFetch<{ data: { id: string }[] }>(
+    `/runtime/process-instances?processDefinitionKey=${ATR_PROCESS_KEY}&businessKey=${encodeURIComponent(observationId)}`
+  ).then((r) => r.data || []).catch(() => [] as { id: string }[]);
+  if (runtime[0]) return runtime[0].id;
+
+  const historic = await flowableFetch<{ data: { id: string }[] }>(
+    `/history/historic-process-instances?processDefinitionKey=${ATR_PROCESS_KEY}&businessKey=${encodeURIComponent(observationId)}&size=1`
+  ).then((r) => r.data || []).catch(() => [] as { id: string }[]);
+  return historic[0]?.id ?? null;
+}
+
+/** Builds the full chronological event list for one observation, given
+ *  only its observationId (the businessKey shared by the BPMN process
+ *  and every extension-approval case it ever spawned). Safe to call for
+ *  either a BPMN or CMMN task view — observationId is a variable on
+ *  both. Never throws: any sub-fetch failing just means fewer events,
+ *  not a broken History tab. */
+export async function getAtrObservationHistoryEvents(
+  observationId: string
+): Promise<ObservationHistoryEvent[]> {
+  if (!observationId) return [];
+  const events: ObservationHistoryEvent[] = [];
+
+  // ── BPMN side ──
+  const processInstanceId = await findAtrProcessInstanceIdAnyState(observationId).catch(() => null);
+  if (processInstanceId) {
+    try {
+      const bpmnTasks = await flowableFetch<{ data: any[] }>(
+        `/history/historic-task-instances?processInstanceId=${processInstanceId}&finished=true&size=100&sort=endTime`
+      );
+      for (const t of bpmnTasks.data || []) {
+        const details = await getHistoricDetailForTask(t.id, false, {
+          instanceId: processInstanceId,
+          endTime: t.endTime,
+        });
+
+        if (t.taskDefinitionKey === 'auditeeSubmitAction') {
+          const action = details.action || '';
+          events.push({
+            id: t.id,
+            taskDefinitionKey: t.taskDefinitionKey,
+            label:
+              action === 'SUBMIT' ? 'Submitted for review' :
+              action === 'EXTENSION' ? 'Requested extension' :
+              action === 'CANCEL' ? 'Cancelled observation' :
+              'Auditee action',
+            actor: t.assignee,
+            timestamp: t.endTime,
+            outcome: action || undefined,
+            comment: details.correctiveActionDetails || details.extensionReason || undefined,
+            category: action === 'EXTENSION' ? 'extension' : 'submit',
+          });
+        } else if (t.taskDefinitionKey === 'auditorReviewEvidence') {
+          const decision = details.reviewDecision || '';
+          events.push({
+            id: t.id,
+            taskDefinitionKey: t.taskDefinitionKey,
+            label:
+              decision === 'APPROVE' ? 'Approved & closed' :
+              decision === 'REJECT' ? 'Returned to auditee' :
+              decision === 'INVALID' ? 'Marked invalid' :
+              decision === 'BLOCKED' ? 'Marked blocked' :
+              'Auditor review',
+            actor: t.assignee,
+            timestamp: t.endTime,
+            outcome: decision || undefined,
+            comment: details.reviewComments || undefined,
+            category: 'review',
+          });
+        }
+      }
+    } catch {
+      // history endpoint unreachable — fall through, still try CMMN events
+    }
+  }
+
+  // ── CMMN side — every extension case ever started for this
+  //    observation (there can be more than one across repeat cycles) ──
+  try {
+    const cases = await cmmnFetch<{ data: any[] }>(
+      `/cmmn-history/historic-case-instances?caseDefinitionKey=${ATR_CASE_KEY}&businessKey=${encodeURIComponent(observationId)}&size=100`
+    );
+    for (const c of cases.data || []) {
+      const caseTasks = await cmmnFetch<{ data: any[] }>(
+        `/cmmn-history/historic-task-instances?caseInstanceId=${c.id}&finished=true&size=100&sort=endTime`
+      ).catch(() => ({ data: [] as any[] }));
+
+      for (const t of caseTasks.data || []) {
+        const details = await getHistoricDetailForTask(t.id, true, {
+          instanceId: c.id,
+          endTime: t.endTime,
+        });
+
+        if (t.taskDefinitionKey === 'commercialHeadApprovalTask') {
+          const decision = details.commercialDecision || '';
+          events.push({
+            id: t.id,
+            taskDefinitionKey: t.taskDefinitionKey,
+            label:
+              decision === 'APPROVE' ? 'Commercial Head approved extension' :
+              decision === 'REJECT' ? 'Commercial Head rejected extension' :
+              'Commercial Head decision',
+            actor: t.assignee,
+            timestamp: t.endTime,
+            outcome: decision || undefined,
+            comment: details.commercialComment || undefined,
+            category: 'extension',
+          });
+        } else if (t.taskDefinitionKey === 'functionalHeadApprovalTask') {
+          const decision = details.functionalDecision || '';
+          events.push({
+            id: t.id,
+            taskDefinitionKey: t.taskDefinitionKey,
+            label:
+              decision === 'APPROVE' ? 'Functional Head approved extension' :
+              decision === 'REJECT' ? 'Functional Head rejected extension' :
+              'Functional Head decision',
+            actor: t.assignee,
+            timestamp: t.endTime,
+            outcome: decision || undefined,
+            comment: details.functionalComment || undefined,
+            category: 'extension',
+          });
+        }
+      }
+    }
+  } catch {
+    // no extension ever requested, or CMMN history unreachable — fine
+  }
+
+  return events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+
+export interface ObservationHistorySummary {
+  submittedCount: number;
+  returnedCount: number;
+  extensionRequestedCount: number;
+  extensionApprovedCount: number;
+  extensionRejectedCount: number;
+  isClosed: boolean;
+}
+
+/** Quick counts for the summary chips above the timeline — "Returned
+ *  3×" is the number the user actually asked to see at a glance. */
+export function summarizeObservationHistory(
+  events: ObservationHistoryEvent[]
+): ObservationHistorySummary {
+  const isHeadTask = (k: string) =>
+    k === 'commercialHeadApprovalTask' || k === 'functionalHeadApprovalTask';
+
+  return {
+    submittedCount: events.filter(
+      (e) => e.taskDefinitionKey === 'auditeeSubmitAction' && e.outcome === 'SUBMIT'
+    ).length,
+    returnedCount: events.filter(
+      (e) => e.taskDefinitionKey === 'auditorReviewEvidence' && e.outcome === 'REJECT'
+    ).length,
+    extensionRequestedCount: events.filter((e) => e.outcome === 'EXTENSION').length,
+    extensionApprovedCount: events.filter((e) => isHeadTask(e.taskDefinitionKey) && e.outcome === 'APPROVE').length,
+    extensionRejectedCount: events.filter((e) => isHeadTask(e.taskDefinitionKey) && e.outcome === 'REJECT').length,
+    isClosed: events.some(
+      (e) => e.taskDefinitionKey === 'auditorReviewEvidence' && e.outcome === 'APPROVE'
+    ),
+  };
+}
+
+
+async function getAllTaskIdsForProcessInstance(processInstanceId: string): Promise<string[]> {
+  const [active, historic] = await Promise.all([
+    flowableFetch<{ data: { id: string }[] }>(
+      `/runtime/tasks?processInstanceId=${processInstanceId}&size=100`
+    ).then((r) => r.data || []).catch(() => [] as { id: string }[]),
+    flowableFetch<{ data: { id: string }[] }>(
+      `/history/historic-task-instances?processInstanceId=${processInstanceId}&size=100`
+    ).then((r) => r.data || []).catch(() => [] as { id: string }[]),
+  ]);
+  const ids = new Set<string>();
+  [...active, ...historic].forEach((t) => ids.add(t.id));
+  return [...ids];
+}
+
+export async function getProcessInstanceAttachments(
+  processInstanceId: string
+): Promise<FlowableAttachment[]> {
+  const taskIds = await getAllTaskIdsForProcessInstance(processInstanceId);
+  const results = await Promise.allSettled(
+    taskIds.map((taskId) =>
+      flowableFetch<FlowableAttachment[]>(`/runtime/tasks/${taskId}/attachments`).then(
+        (attachments) =>
+          // Flowable's attachment REST response has no taskId field (only
+          // taskUrl) — stamp it here from the fetch we already know it
+          // came from, instead of trusting a.taskId, which is always
+          // null/undefined and silently produces /tasks//attachments/...
+          // (double-slash → 500) if used directly for download.
+          (attachments || []).map((a) => ({ ...a, taskId }))
+      )
+    )
+  );
+  const seen = new Set<string>();
+  const out: FlowableAttachment[] = [];
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      for (const a of r.value) {
+        if (!seen.has(a.id)) {
+          seen.add(a.id);
+          out.push(a);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/** Attachment content is task-scoped too — needs the owning taskId, not the processInstanceId. */
+export async function downloadAttachment(
+  taskId: string,
+  attachmentId: string,
+  fileName: string
+): Promise<void> {
+  const res = await fetch(
+    `${FLOWABLE_BASE}/runtime/tasks/${taskId}/attachments/${attachmentId}/content`,
+    { headers: { Authorization: HEADERS.Authorization } }
+  );
+  if (!res.ok) throw new Error(`Failed to download attachment [${res.status}]`);
+
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
