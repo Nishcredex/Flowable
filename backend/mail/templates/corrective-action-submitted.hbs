@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Corrective Action Submitted</title></head>
+<body style="margin:0;padding:0;background-color:#eef1f5;font-family:Arial,Helvetica,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#eef1f5;padding:32px 0;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;">
+          {{> header}}
+          <tr>
+            <td style="padding:32px;">
+              <h2 style="margin:0 0 16px;font-size:20px;color:#1a2333;">Corrective Action Submitted for Review</h2>
+              <p style="margin:0 0 12px;font-size:14px;line-height:22px;color:#3c4657;">
+                Hi {{default employeeName "there"}},
+              </p>
+              <p style="margin:0 0 20px;font-size:14px;line-height:22px;color:#3c4657;">
+                A corrective action has been submitted and is awaiting your review.
+              </p>
+              <table role="presentation" width="100%" style="border-collapse:collapse;margin-bottom:8px;">
+                <tr><td style="padding:8px 0;font-size:13px;color:#8a94a3;width:140px;">Observation ID</td><td style="padding:8px 0;font-size:13px;color:#1a2333;font-weight:600;">{{observationId}}</td></tr>
+                <tr><td style="padding:8px 0;font-size:13px;color:#8a94a3;">Submitted By</td><td style="padding:8px 0;font-size:13px;color:#1a2333;font-weight:600;">{{default employeeName "N/A"}}</td></tr>
+                <tr><td style="padding:8px 0;font-size:13px;color:#8a94a3;">Related Audit</td><td style="padding:8px 0;font-size:13px;color:#1a2333;font-weight:600;">{{auditName}} ({{auditId}})</td></tr>
+              </table>
+              {{#if remarks}}
+              <p style="margin:16px 0 0;font-size:13px;line-height:20px;color:#3c4657;background:#f4f6f8;padding:12px 14px;border-radius:6px;">
+                <strong>Corrective Action Details:</strong> {{remarks}}
+              </p>
+              {{/if}}
+              {{> button buttonText="Review Submission"}}
+            </td>
+          </tr>
+          {{> footer}}
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

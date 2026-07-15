@@ -1846,27 +1846,54 @@ export async function markInboxNotificationRead(userId: string, notificationId: 
   }).catch(() => {});
 }
 async function sendNotification(kind: string, payload: Record<string, string>): Promise<void> {
-  // eslint-disable-next-line no-console
   console.info(`[notification:${kind}]`, payload);
 
   const recipientId = payload.auditeeId || payload.auditorId || payload.userId;
-  if (!recipientId) return; // nothing to attach it to
+  if (!recipientId) return;
 
-  const messages: Record<string, string> = {
-    'auditee-assigned':      `A new observation ${payload.observationId} has been assigned to you.`,
-    'observation-closed':    `Observation ${payload.observationId} has been approved and closed.`,
-    'observation-returned':  `Observation ${payload.observationId} was returned by the auditor for revision.`,
-    'extension-approved':    `Your extension request for ${payload.observationId} was approved.`,
-    'extension-rejected':    `Your extension request for ${payload.observationId} was rejected.`,
-  };
-
+  // existing in-app inbox notification — keep this
+const messages: Record<string, string> = {
+  'auditee-assigned':      `A new observation ${payload.observationId} has been assigned to you.`,
+  'observation-closed':    `Observation ${payload.observationId} has been approved and closed.`,
+  'observation-returned':  `Observation ${payload.observationId} was returned by the auditor for revision.`,
+  'extension-approved':    `Your extension request for ${payload.observationId} was approved.`,
+  'extension-rejected':    `Your extension request for ${payload.observationId} was rejected.`,
+};
   await pushInboxNotification(recipientId, {
-    kind,
-    message: messages[kind] || `Update on observation ${payload.observationId}.`,
+    kind, message: messages[kind] || `Update on observation ${payload.observationId}.`,
     observationId: payload.observationId,
-  }).catch(() => {
-    // Best-effort — a failed inbox write shouldn't block the workflow action.
-  });
+  }).catch(() => {});
+
+  // NEW — real email via the mail module you just merged in
+  const templateMap: Record<string, string> = {
+    'auditee-assigned':   'observation-assigned',
+    'observation-closed': 'observation-closed',
+    'extension-approved': 'generic-notification',
+    'extension-rejected': 'generic-notification',
+  };
+  const template = templateMap[kind];
+  if (!template) return;
+
+  try {
+    const user = await getUserById(recipientId);
+    if (!user?.email) return;
+    await fetch(`${API_BASE}/api/mail/send-template`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        to: user.email,
+        subject: `Observation ${payload.observationId} — update`,
+        template,
+        context: {
+          employeeName: `${user.firstName} ${user.lastName}`,
+          observationId: payload.observationId,
+          remarks: messages[kind],
+        },
+      }),
+    });
+  } catch (err) {
+    console.error('[email] send failed:', err);
+  }
 }
 export interface UserPreferencesPayload {
   userId:        string;

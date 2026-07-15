@@ -78,9 +78,45 @@ import {
   startAtrExtensionCase,
   advanceExtensionCase,
   completeClosureNotificationJob,
-  
+   getUserById,
 } from './flowableApi';
 import pushInboxNotification from './flowableApi';
+
+
+
+/** Looks up each userId's email via Flowable identity and fires a
+ *  templated email through the mail module mounted at /api/mail.
+ *  Best-effort: a failed lookup or send never blocks the workflow. */
+async function notifyByUserIds(
+  userIds: (string | undefined)[],
+  template: string,
+  subject: string,
+  extraContext: Record<string, string> = {}
+): Promise<void> {
+  const ids = userIds.filter(Boolean) as string[];
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        const user = await getUserById(id);
+        if (!user?.email) return;
+        await apiFetch('/api/mail/send-template', {
+          method: 'POST',
+          body: JSON.stringify({
+            to: user.email,
+            subject,
+            template,
+            context: {
+              employeeName: `${user.firstName} ${user.lastName}`.trim(),
+              ...extraContext,
+            },
+          }),
+        });
+      } catch (err) {
+        console.error(`[mail] notify ${id} (${template}) failed:`, err);
+      }
+    })
+  );
+}
 /** auditeeSubmitAction — sets "action" to SUBMIT / EXTENSION / CANCEL per
  *  gatewayAuditeeAction's conditions. SUBMIT/EXTENSION carry the auditee's
  *  write-up; EXTENSION additionally needs the requested new target date,
@@ -105,36 +141,67 @@ export async function submitAtrAuditeeAction(
   await _completeAtrBpmnTask(taskId, {
     stepName: 'auditeeSubmitAction',
     comments: body.correctiveActionDetails || body.extensionReason,
-    // completeTask's payload type is narrow (CompleteTaskPayload); the
-    // fields below (action / extensionReason / requestedExtensionDate)
-    // are the actual BPMN process variables the gateway/CMMN case read,
-    // so they're sent as-is rather than shoehorned into existing fields.
     ...( { action: body.action,
            correctiveActionDetails: body.correctiveActionDetails,
            extensionReason: body.extensionReason,
            requestedExtensionDate: body.requestedExtensionDate } as any ),
   });
 
+  // ── SUBMIT: notify auditor + commercial head + functional head ──
+  if (body.action === 'SUBMIT' && processInstanceId) {
+    const vars = await getProcessVariables(processInstanceId);
+    const observationId = getVariableValue(vars, 'observationId');
+    await notifyByUserIds(
+      [
+        getVariableValue(vars, 'auditorId'),
+        getVariableValue(vars, 'commercialHeadId'),
+        getVariableValue(vars, 'functionalHeadId'),
+      ],
+      'corrective-action-submitted',
+      `Corrective Action Submitted - ${observationId}`,
+      {
+        observationId,
+        auditId: getVariableValue(vars, 'auditId'),
+        auditName: getVariableValue(vars, 'auditName'),
+        remarks: body.correctiveActionDetails || '',
+      }
+    );
+  }
+
   if (body.action === 'EXTENSION') {
     if (!processInstanceId) {
       throw new Error('submitAtrAuditeeAction: processInstanceId is required to start the extension approval case.');
     }
     const vars = await getProcessVariables(processInstanceId);
+    const observationId = getVariableValue(vars, 'observationId');
     const caseInstance = await startAtrExtensionCase({
-      observationId:          getVariableValue(vars, 'observationId'),
+      observationId,
       auditeeId:              getVariableValue(vars, 'auditeeId'),
       commercialHeadId:       getVariableValue(vars, 'commercialHeadId'),
       functionalHeadId:       getVariableValue(vars, 'functionalHeadId'),
       targetDate:             getVariableValue(vars, 'targetDate'),
       requestedExtensionDate: body.requestedExtensionDate || '',
     });
-    // No-op until the Commercial Head actually approves, but safe/cheap
-    // to call — it just confirms the case is parked at the first human
-    // approval task and returns immediately.
-    await advanceExtensionCase(caseInstance.id, getVariableValue(vars, 'observationId'));
+    await advanceExtensionCase(caseInstance.id, observationId);
+
+    // ── EXTENSION: notify commercial head + functional head ──
+    await notifyByUserIds(
+      [
+        getVariableValue(vars, 'commercialHeadId'),
+        getVariableValue(vars, 'functionalHeadId'),
+      ],
+      'extension-requested',
+      `Extension Requested - ${observationId}`,
+      {
+        observationId,
+        auditId: getVariableValue(vars, 'auditId'),
+        auditName: getVariableValue(vars, 'auditName'),
+        requestedDueDate: body.requestedExtensionDate || '',
+        remarks: body.extensionReason || '',
+      }
+    );
   }
 }
-
 /** auditorReviewEvidence — sets "reviewDecision" to one of
  *  APPROVE / REJECT / INVALID / BLOCKED per gatewayAuditorDecision.
  *  On APPROVE, also drives the sendClosureNotification external-worker
